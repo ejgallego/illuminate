@@ -8,7 +8,7 @@ Lean playback state machine, and uses one shared DOM renderer for
 JavaScript, VIR, and FIR. The measurements no longer justify changing
 that boundary or moving playback semantics back into JavaScript.
 
-Five results are now strong enough to drive the next work:
+Six results are now strong enough to drive the next work:
 
 1. Both corrected FIR packages pass all 107 differential traces
    against the JavaScript oracle, VIR JSON, VIR typed, and VIR
@@ -25,17 +25,24 @@ Five results are now strong enough to drive the next work:
 5. Absolute browser microsecond values are too sensitive to machine
    state for regression gating. Paired candidate/JavaScript ratios and
    phase shares are much more repeatable.
+6. The live `requestAnimationFrame` dashboard cannot resolve
+   Illuminate's detailed host-observer cost: same-runtime on/off
+   ranges span both faster and slower outcomes. FIR v4 also performs
+   generated-adapter timing in both modes, so the current off lane is
+   not yet a timing-free production baseline.
 
 The priority order is therefore:
 
-1. give FIR a generated in-place resident-state update or equivalent
+1. give FIR an optional timing-free dispatch path so production and
+   diagnostic adapter costs can be measured separately;
+2. give FIR a generated in-place resident-state update or equivalent
    compact state ABI, while retaining generic dispatch as the oracle;
-2. preserve interpreter-local declaration/symbol caches across VIR's
+3. preserve interpreter-local declaration/symbol caches across VIR's
    repeated retained calls;
-3. land and consume a clean scalar-tick FIR package as a smaller,
+4. land and consume a clean scalar-tick FIR package as a smaller,
    independent improvement;
-4. add the fixed-event browser regression harness described below;
-5. defer application-level type rewrites until these runtime boundary
+5. add the fixed-event browser regression harness described below;
+6. defer application-level type rewrites until these runtime boundary
    changes are measured.
 
 ## Compared implementations
@@ -106,8 +113,37 @@ This makes absolute browser microseconds diagnostic, not a regression
 gate. The harness now records the median and range of per-observation
 paired ratios instead of relying only on a ratio of independent
 aggregate medians. Benchmark mode also suppresses the detailed phase
-charts while retaining the phase observer, so visualization work does
-not perturb the measurement.
+charts in both lanes; only the profiled lane retains the phase
+observer, so visualization work does not perturb the comparison.
+
+### Host-profiler observer matrix
+
+The 2026-08-09 matrix used four balanced five-second rounds per mode
+and the scalar-tick FIR v4 package at `ac7467f3`. Each backend-round
+used one fresh page and runtime for both modes, reset all callback
+metrics between modes, and balanced which mode ran first. Every
+observation retained 16/16 DOM matches. The table reports the paired
+per-round change caused by enabling Illuminate's detailed host
+observer while leaving phase charts hidden:
+
+| Backend       | JS median change | Candidate median change | Candidate on/off ratio and range |
+| ------------- | ---------------: | ----------------------: | -------------------------------: |
+| VIR selection |          −2.1 µs |                −17.1 µs |               0.95× (0.54–2.32×) |
+| VIR full      |          +1.6 µs |                −43.3 µs |               0.90× (0.51–2.70×) |
+| FIR selection |          −4.3 µs |                −10.1 µs |               0.99× (0.36–1.24×) |
+
+Every candidate range crosses 1× and every paired delta range crosses
+zero. Even same-runtime pairing cannot price this observer inside the
+live animation workload; scheduling and workload-phase noise are
+larger than the effect. The negative medians are not speedups.
+
+This also does not show that FIR timing is free. The generated v4
+adapter still calls `performance.now()`, constructs timing and memory
+records, and freezes the result on every tick in both modes. The
+matrix isolates only Illuminate's additional observer. A fixed-event
+browser harness is required to measure that observer, and a generated
+timing-free dispatch mode is required before calling the FIR off lane
+a production baseline.
 
 ## VIR selection core
 
@@ -365,8 +401,16 @@ npm run measure:vir-selection-core
 ILLUMINATE_FIR_LIVE_PLAYER_DIR=/absolute/path/to/immutable/v4-package \
   npm run measure:fir-live
 
-npm run measure:live-dashboard -- --duration-ms 3000 --runs 3
+npm run measure:live-dashboard -- --duration-ms 3000 --runs 4
 ```
+
+The live-dashboard report pairs `host-profiler-off` and
+`host-profiler-on` observations for every backend and benchmark round.
+Each backend-round gets a fresh page and runtime shared by both modes,
+callback metrics are reset between modes, backend and profiler order
+are balanced, and phase charts are suppressed. FIR v4 still collects
+its generated-adapter timings in both modes, so the off mode measures
+removal of Illuminate's detailed host observer only.
 
 Raw structured outputs are written to:
 

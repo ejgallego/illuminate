@@ -170,6 +170,15 @@
         value.totalSlowCallbacks = 0;
     }
 
+    /** @param {PlayerMetrics} value */
+    function clearRunMetrics(value) {
+        value.samples.length = 0;
+        value.phaseSamples.length = 0;
+        value.totalCallbacks = 0;
+        value.totalCpu = 0;
+        clearPersistentMetrics(value);
+    }
+
     /** @template T @param {string} owner @param {() => T} action @returns {T} */
     function withOwner(owner, action) {
         var previous = currentOwner;
@@ -1752,6 +1761,16 @@
             };
         };
 
+        window.__illuminateComparisonResetMetrics = function () {
+            rows.forEach(function (row) {
+                var jsValue = metrics.get(row.jsOwner);
+                var candidateValue = metrics.get(row.candidateOwner);
+                if (jsValue) clearRunMetrics(jsValue);
+                if (candidateValue) clearRunMetrics(candidateValue);
+            });
+            refreshDashboard();
+        };
+
         status.textContent =
             String(rows.length) +
             " examples · " +
@@ -1775,6 +1794,7 @@
                 });
                 runtime.dispose();
                 delete window.__illuminateComparisonSnapshot;
+                delete window.__illuminateComparisonResetMetrics;
                 window.requestAnimationFrame = nativeRequestAnimationFrame;
                 window.cancelAnimationFrame = nativeCancelAnimationFrame;
             },

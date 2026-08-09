@@ -579,6 +579,18 @@ ILLUMINATE_FIR_LIVE_PLAYER_DIR=/absolute/immutable/package \
 npm run measure:live-dashboard
 ```
 
+The live-dashboard measurement runs every backend with the detailed
+host observer both disabled and enabled. Each pair shares one fresh
+page and runtime, resets all callback metrics between modes, and
+balances which mode runs first. Phase charts remain hidden so the
+comparison isolates measurement hooks rather than chart rendering.
+With the v4 FIR package, the disabled mode still includes timing
+performed inside the generated adapter; it is the lightest current
+host path, not yet a fully timing-free production path. Treat the
+observer-effect range as unresolved whenever it crosses both zero
+overhead and a 1× ratio; live animation scheduling is noisier than a
+fixed-event microbenchmark.
+
 The older `npm run measure:fir-native` command remains the whole-trace
 baseline. Results, acceptance requirements, and the package contract
 are recorded in

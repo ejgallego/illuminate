@@ -935,6 +935,7 @@ def test_animation_comparison_dashboard(page):
     assert page.locator(".stage svg").count() == 32
     assert "16 examples · 32 owned players" in page.locator("#comparison-status").inner_text()
     assert page.locator("#comparison-backend").input_value() == "vir-selection"
+    assert page.evaluate("typeof window.__illuminateComparisonResetMetrics") == "function"
     assert page.locator(".sticky-peaks").count() == 1
     assert page.locator(".sticky-peaks").evaluate("node => getComputedStyle(node).position") == "sticky"
     assert page.locator("[data-sticky-candidate-name]").text_content() == "VIR selection"
@@ -1138,6 +1139,10 @@ def test_animation_comparison_dashboard(page):
     assert page.locator("[data-sticky-peak]").all_inner_texts() == ["—", "—"]
     cleared_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
     assert all(row["callback"]["maximum"] == 0 for row in cleared_snapshot["rows"])
+    page.evaluate("window.__illuminateComparisonResetMetrics?.()")
+    reset_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert all(row["callback"]["totalCallbacks"] == 0 for row in reset_snapshot["rows"])
+    assert all(row["phases"]["samples"] == 0 for row in reset_snapshot["rows"])
     assert errors == []
 
 

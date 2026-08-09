@@ -20,6 +20,9 @@ from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = ROOT / "test_output"
+HOST_PROFILER_OFF = "host-profiler-off"
+HOST_PROFILER_ON = "host-profiler-on"
+HOST_PROFILER_MODES = (HOST_PROFILER_OFF, HOST_PROFILER_ON)
 
 
 class QuietHandler(SimpleHTTPRequestHandler):
@@ -43,20 +46,49 @@ def chromium_options():
     return {}
 
 
-def measure_backend(page, backend: str, duration_ms: int):
-    """Collects one rolling dashboard observation for a candidate backend."""
+def measure_backend(page, backend: str, timing_mode: str, duration_ms: int):
+    """Collects one rolling dashboard observation for a backend and timing mode."""
+    assert timing_mode in HOST_PROFILER_MODES
     page.locator("#comparison-backend").select_option(backend)
-    page.locator("#comparison-auto-cycle").check()
+    page.click("#comparison-pause")
+    page.locator("#comparison-vir-timing").set_checked(
+        timing_mode == HOST_PROFILER_ON
+    )
     page.click("#comparison-reset")
+    reset_metrics = page.evaluate(
+        """() => {
+            if (typeof window.__illuminateComparisonResetMetrics !== 'function')
+                return false;
+            window.__illuminateComparisonResetMetrics();
+            return true;
+        }"""
+    )
+    assert reset_metrics is True
+    page.locator("#comparison-auto-cycle").check()
     page.click("#comparison-start")
     page.wait_for_timeout(duration_ms)
     snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
     assert snapshot is not None, "dashboard did not expose its measurement snapshot"
     assert snapshot["backend"] == backend
+    assert snapshot["timingEnabled"] is (timing_mode == HOST_PROFILER_ON)
+    phase_counts = [
+        row[result_field]["samples"]
+        for row in snapshot["rows"]
+        for result_field in ("jsPhases", "phases")
+    ]
+    if timing_mode == HOST_PROFILER_ON:
+        assert all(count > 0 for count in phase_counts), (
+            "profiled observation did not collect every phase lane"
+        )
+    else:
+        assert all(count == 0 for count in phase_counts), (
+            "unprofiled observation unexpectedly collected phase samples"
+        )
     dom_matches = page.locator("[data-dom-match]:not(.mismatch)").count()
     page.click("#comparison-pause")
     return {
         "backend": backend,
+        "timingMode": timing_mode,
         "durationMs": duration_ms,
         "domMatches": dom_matches,
         "rowCount": page.locator(".example").count(),
@@ -84,12 +116,13 @@ def maximum_row_field(observation, result_field: str, value_field: str):
     return max(values)
 
 
-def summarize_backend(observations, backend: str):
-    """Takes medians of per-run row means for one candidate backend."""
+def summarize_backend(observations, backend: str, timing_mode: str):
+    """Takes medians of per-run row means for one backend and timing mode."""
     selected = [
         observation
         for observation in observations
         if observation["backend"] == backend
+        and observation["timingMode"] == timing_mode
     ]
     if not selected:
         return None
@@ -142,6 +175,8 @@ def summarize_backend(observations, backend: str):
         if js > 0
     ]
     return {
+        "timingMode": timing_mode,
+        "phaseDataAvailable": timing_mode == HOST_PROFILER_ON,
         "runs": len(selected),
         "minimumDomMatches": min(observation["domMatches"] for observation in selected),
         "rowCount": selected[0]["rowCount"],
@@ -208,11 +243,60 @@ def summarize_backend(observations, backend: str):
     }
 
 
+def effect_distribution(values):
+    """Summarizes one per-round observer-effect distribution."""
+    return {
+        "median": statistics.median(values),
+        "minimum": min(values),
+        "maximum": max(values),
+    }
+
+
+def summarize_host_profiler_effect(observations, backend: str):
+    """Pairs profiling-off and profiling-on observations by benchmark round."""
+    by_round = {}
+    for observation in observations:
+        if observation["backend"] != backend:
+            continue
+        by_round.setdefault(observation["round"], {})[
+            observation["timingMode"]
+        ] = observation
+    pairs = [
+        (modes[HOST_PROFILER_OFF], modes[HOST_PROFILER_ON])
+        for modes in by_round.values()
+        if HOST_PROFILER_OFF in modes and HOST_PROFILER_ON in modes
+    ]
+    if not pairs:
+        return None
+
+    def engine_effect(result_field: str):
+        off_values = [
+            mean_row_field(off, result_field, "mean") for off, _on in pairs
+        ]
+        on_values = [
+            mean_row_field(on, result_field, "mean") for _off, on in pairs
+        ]
+        ratios = [on / off for off, on in zip(off_values, on_values) if off > 0]
+        deltas = [on - off for off, on in zip(off_values, on_values)]
+        return {
+            "profilingOffCallbackMs": effect_distribution(off_values),
+            "profilingOnCallbackMs": effect_distribution(on_values),
+            "profilingOnToOffRatio": effect_distribution(ratios),
+            "profilingOverheadMs": effect_distribution(deltas),
+        }
+
+    return {
+        "pairedRounds": len(pairs),
+        "javascript": engine_effect("jsCallback"),
+        "candidate": engine_effect("callback"),
+    }
+
+
 def main():
     """Runs the browser benchmark and writes its structured report."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--duration-ms", type=int, default=5000)
-    parser.add_argument("--runs", type=int, default=3)
+    parser.add_argument("--runs", type=int, default=4)
     parser.add_argument("--allow-vir-only", action="store_true")
     args = parser.parse_args()
     assert args.duration_ms >= 2000, "duration must cover the dashboard's rolling window"
@@ -241,8 +325,15 @@ def main():
                     else ["fir", "vir-full", "vir-selection"]
                 )
                 if args.allow_vir_only and not fir_build.exists():
-                    order = ["vir-selection", "vir-full"]
-                for backend in order:
+                    order = (
+                        ["vir-selection", "vir-full"]
+                        if round_index % 2 == 0
+                        else ["vir-full", "vir-selection"]
+                    )
+                for backend_index, backend in enumerate(order):
+                    timing_order = list(HOST_PROFILER_MODES)
+                    if (round_index + backend_index) % 2 == 1:
+                        timing_order.reverse()
                     context = browser.new_context()
                     try:
                         page = context.new_page()
@@ -259,7 +350,6 @@ def main():
                         page.evaluate(
                             "document.body.dataset.suppressPhaseCharts = 'true'"
                         )
-                        page.locator("#comparison-vir-timing").check()
                         fir_available = not page.locator(
                             '#comparison-backend option[value="fir"]'
                         ).is_disabled()
@@ -269,10 +359,14 @@ def main():
                             )
                         if backend == "fir" and not fir_available:
                             continue
-                        observation = measure_backend(page, backend, args.duration_ms)
-                        observation["round"] = round_index
-                        observation["order"] = order
-                        observations.append(observation)
+                        for timing_mode in timing_order:
+                            observation = measure_backend(
+                                page, backend, timing_mode, args.duration_ms
+                            )
+                            observation["round"] = round_index
+                            observation["backendOrder"] = order
+                            observation["timingModeOrder"] = timing_order
+                            observations.append(observation)
                     finally:
                         context.close()
             browser.close()
@@ -283,13 +377,26 @@ def main():
 
     assert errors == [], f"dashboard page errors: {errors}"
     build = json.loads(fir_build.read_text()) if fir_build.exists() else None
-    summaries = {
-        backend: summary
-        for backend in ("vir-selection", "vir-full", "fir")
-        if (summary := summarize_backend(observations, backend)) is not None
-    }
+    summaries = {}
+    for backend in ("vir-selection", "vir-full", "fir"):
+        mode_summaries = {
+            timing_mode: summary
+            for timing_mode in HOST_PROFILER_MODES
+            if (
+                summary := summarize_backend(observations, backend, timing_mode)
+            )
+            is not None
+        }
+        if mode_summaries:
+            profiler_effect = summarize_host_profiler_effect(observations, backend)
+            assert profiler_effect is not None
+            assert profiler_effect["pairedRounds"] == args.runs
+            summaries[backend] = {
+                "modes": mode_summaries,
+                "hostProfilerEffect": profiler_effect,
+            }
     report = {
-        "schema": "illuminate.live-dashboard-phases/v4",
+        "schema": "illuminate.live-dashboard-phases/v5",
         "generatedAtUnix": time(),
         "scope": {
             "domIncluded": True,
@@ -302,6 +409,12 @@ def main():
             "fullVirOwnsPatchRendering": True,
             "sharedJsFirRenderer": True,
             "jsInput": "original JavaScript AnimData object without conversion",
+            "hostProfilerModes": {
+                HOST_PROFILER_OFF: "detailed dashboard phase observer disabled",
+                HOST_PROFILER_ON: "detailed dashboard phase observer enabled; phase charts suppressed",
+            },
+            "firAdapterInternalTiming": "v4 remains enabled in both modes; host-profiler-off is not yet a timing-free FIR production path",
+            "hostProfilerEffectInterpretation": "diagnostic only; a ratio range spanning 1 or delta range spanning zero does not resolve observer cost",
         },
         "identity": {
             "platform": platform.platform(),
@@ -319,8 +432,10 @@ def main():
         "policy": {
             "durationMs": args.duration_ms,
             "runs": args.runs,
-            "freshBrowserContextPerObservation": True,
+            "freshBrowserContextPerBackendRound": True,
+            "sharedContextWithinHostProfilerPair": True,
             "balancedBackendOrder": True,
+            "balancedHostProfilerOrder": True,
             "phaseVisualizationSuppressed": True,
         },
         "observations": observations,
@@ -329,15 +444,28 @@ def main():
     report_path = OUTPUT / "perf" / "live-dashboard-phases.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2) + "\n")
-    for backend, summary in summaries.items():
-        print(
-            f"{backend.upper()}: {summary['minimumDomMatches']}/{summary['rowCount']} "
-            f"DOM matches, median JS {summary['jsCallbackMeanMs']:.3f} ms, "
-            f"candidate {summary['candidateCallbackMeanMs']:.3f} ms, "
-            f"paired median {summary['pairedCallbackRatio']['median']:.2f}x JS "
-            f"({summary['pairedCallbackOverheadMs']['median'] * 1000:+.1f} us), "
-            f"peak {summary['persistentCallbackPeakMs']['candidate']['median']:.3f} ms"
-        )
+    for backend, backend_summary in summaries.items():
+        for timing_mode, summary in backend_summary["modes"].items():
+            print(
+                f"{backend.upper()} {timing_mode}: "
+                f"{summary['minimumDomMatches']}/{summary['rowCount']} DOM matches, "
+                f"median JS {summary['jsCallbackMeanMs']:.3f} ms, "
+                f"candidate {summary['candidateCallbackMeanMs']:.3f} ms, "
+                f"paired median {summary['pairedCallbackRatio']['median']:.2f}x JS "
+                f"({summary['pairedCallbackOverheadMs']['median'] * 1000:+.1f} us), "
+                f"peak {summary['persistentCallbackPeakMs']['candidate']['median']:.3f} ms"
+            )
+        effect = backend_summary["hostProfilerEffect"]
+        if effect is not None:
+            js_effect = effect["javascript"]
+            candidate_effect = effect["candidate"]
+            print(
+                f"{backend.upper()} host-profiler effect: JS "
+                f"{js_effect['profilingOnToOffRatio']['median']:.2f}x "
+                f"({js_effect['profilingOverheadMs']['median'] * 1000:+.1f} us), "
+                f"candidate {candidate_effect['profilingOnToOffRatio']['median']:.2f}x "
+                f"({candidate_effect['profilingOverheadMs']['median'] * 1000:+.1f} us)"
+            )
     print(f"wrote {report_path}")
 
 

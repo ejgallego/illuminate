@@ -82,6 +82,7 @@ declare function createVirSelectionPlayerHost(
 
 interface Window {
     __illuminateComparisonSnapshot?: () => unknown;
+    __illuminateComparisonResetMetrics?: () => void;
 }
 
 // standalone.js and reveal.js use these placeholders that are
