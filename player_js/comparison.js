@@ -675,10 +675,19 @@
     /**
      * @param {PhaseAggregate} jsPhases
      * @param {PhaseAggregate} candidatePhases
+     * @param {number} jsCallbackMs
+     * @param {number} candidateCallbackMs
      * @param {boolean} enabled
      * @param {"vir-selection" | "vir-full" | "fir"} engine
      */
-    function renderAggregatePhases(jsPhases, candidatePhases, enabled, engine) {
+    function renderAggregatePhases(
+        jsPhases,
+        candidatePhases,
+        jsCallbackMs,
+        candidateCallbackMs,
+        enabled,
+        engine,
+    ) {
         var target = /** @type {HTMLElement | null} */ (
             document.querySelector("[data-aggregate-phases]")
         );
@@ -686,35 +695,64 @@
         target.hidden = !enabled;
         if (!enabled) return;
         var definitions = [
-            ["marshal", "marshalMs", "input boundary"],
-            ["execute", "executeMs", "execute"],
-            ["decode", "decodeMs", "decode"],
-            ["rewind", "rewindMs", "rewind"],
-            ["host", "hostMs", engine === "vir-full" ? "host (nested)" : "DOM apply"],
-            ["adapter", "adapterMs", "outer gap"],
+            {
+                key: "callback",
+                label: "whole callback",
+                js: jsCallbackMs,
+                candidate: candidateCallbackMs,
+            },
+            {
+                key: "marshal",
+                label: "input boundary",
+                js: jsPhases.marshalMs,
+                candidate: candidatePhases.marshalMs,
+            },
+            {
+                key: "execute",
+                label: "execute",
+                js: jsPhases.executeMs,
+                candidate: candidatePhases.executeMs,
+            },
+            {
+                key: "decode",
+                label: "decode",
+                js: jsPhases.decodeMs,
+                candidate: candidatePhases.decodeMs,
+            },
+            {
+                key: "rewind",
+                label: "rewind",
+                js: jsPhases.rewindMs,
+                candidate: candidatePhases.rewindMs,
+            },
+            {
+                key: "host",
+                label: engine === "vir-full" ? "host (nested)" : "DOM apply",
+                js: jsPhases.hostMs,
+                candidate: candidatePhases.hostMs,
+            },
+            {
+                key: "adapter",
+                label: "outer gap",
+                js: jsPhases.adapterMs,
+                candidate: candidatePhases.adapterMs,
+            },
         ];
         var scale = 0;
         for (var definition of definitions) {
-            var field =
-                /** @type {"marshalMs" | "executeMs" | "decodeMs" | "rewindMs" | "hostMs" | "adapterMs"} */ (
-                    definition[1]
-                );
-            scale = Math.max(scale, jsPhases[field], candidatePhases[field]);
+            scale = Math.max(scale, definition.js, definition.candidate);
         }
         scale = Math.max(scale, 0.000001);
         for (var definition of definitions) {
-            var key = String(definition[0]);
-            var field =
-                /** @type {"marshalMs" | "executeMs" | "decodeMs" | "rewindMs" | "hostMs" | "adapterMs"} */ (
-                    definition[1]
-                );
-            var group = document.querySelector('[data-aggregate-phase-group="' + key + '"]');
+            var group = document.querySelector(
+                '[data-aggregate-phase-group="' + definition.key + '"]',
+            );
             if (!(group instanceof HTMLElement)) continue;
             var label = group.querySelector("[data-aggregate-phase-label]");
-            if (label) label.textContent = String(definition[2]);
+            if (label) label.textContent = definition.label;
             for (var pair of [
-                ["js", jsPhases[field]],
-                ["candidate", candidatePhases[field]],
+                ["js", definition.js],
+                ["candidate", definition.candidate],
             ]) {
                 var owner = String(pair[0]);
                 var value = Number(pair[1]);
@@ -1387,6 +1425,8 @@
             renderAggregatePhases(
                 averagePhaseAggregate(engineTotals.js.phases),
                 averagePhaseAggregate(engineTotals.candidate.phases),
+                jsMean,
+                candidateMean,
                 virTiming.checked,
                 currentBackend,
             );

@@ -985,8 +985,8 @@ def test_animation_comparison_dashboard(page):
     phase_values = page.locator("[data-phase]").all_inner_texts()
     assert len(phase_values) == 16 * 2 * 8
     assert all(float(value.split()[0]) >= 0 for value in phase_values)
-    assert page.locator("[data-aggregate-phase-group]").count() == 6
-    assert page.locator(".aggregate-phase-column").count() == 12
+    assert page.locator("[data-aggregate-phase-group]").count() == 7
+    assert page.locator(".aggregate-phase-column").count() == 14
     assert page.evaluate(
         """() => [...document.querySelectorAll('[data-aggregate-phase-group]')]
             .every(group => group.querySelectorAll('[data-aggregate-phase-value]').length === 2)"""
@@ -999,6 +999,16 @@ def test_animation_comparison_dashboard(page):
     assert page.evaluate(
         """() => [...document.querySelectorAll(
             '[data-aggregate-phase-group="execute"] [data-aggregate-phase-fill]'
+          )].every(node => Number.parseFloat(node.style.height || '0') > 0)"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-aggregate-phase-group="callback"] [data-aggregate-phase-value]'
+          )].every(node => Number.parseFloat(node.textContent || '0') > 0)"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-aggregate-phase-group="callback"] [data-aggregate-phase-fill]'
           )].every(node => Number.parseFloat(node.style.height || '0') > 0)"""
     )
     assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
