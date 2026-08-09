@@ -541,12 +541,12 @@ renderer with FIR; the original full VIR renderer remains available as
 a control. An accepted persistent FIR package is discovered under
 `test_output/fir-live`. Both columns receive the same controls and
 report rolling callback FPS, main-thread time, callback percentiles,
-long frames, and aggregate CPU estimates. Enable **Runtime phase
-timing** to split the Lean callback into input encoding, execution,
-decoding, reclamation, host rendering, and outer overhead. The
-selection lanes additionally report one-time projection and creation;
-FIR also reports persistent memory. This diagnostic observer has
-measurable overhead and is intentionally off by default:
+long frames, and aggregate CPU estimates. Enable **Detailed callback
+phases** to compare JavaScript and Lean input, execution, decoding,
+reclamation, host rendering, and outer overhead. The selection lanes
+additionally report one-time projection and creation; FIR also reports
+persistent memory. This diagnostic observer has measurable overhead
+and is intentionally off by default:
 
 ```sh
 npm run demo:comparison
@@ -595,6 +595,9 @@ remain useful as frozen performance baselines. The matched JavaScript,
 selection-only VIR, full VIR, and FIR boundary comparison is recorded
 in
 [PLAYER_SELECTION_BOUNDARY_REPORT.md](PLAYER_SELECTION_BOUNDARY_REPORT.md).
+The current cross-runtime conclusions and ranked follow-up work are
+consolidated in
+[PLAYER_PERFORMANCE_CONSOLIDATION.md](PLAYER_PERFORMANCE_CONSOLIDATION.md).
 
 ## Module Overview
 

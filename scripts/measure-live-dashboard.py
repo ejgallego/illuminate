@@ -100,6 +100,24 @@ def summarize_backend(observations, backend: str):
         mean_row_field(observation, "callback", "mean")
         for observation in selected
     )
+    paired_ratios = [
+        mean_row_field(observation, "callback", "mean")
+        / mean_row_field(observation, "jsCallback", "mean")
+        for observation in selected
+    ]
+    paired_deltas = [
+        mean_row_field(observation, "callback", "mean")
+        - mean_row_field(observation, "jsCallback", "mean")
+        for observation in selected
+    ]
+    js_callback_means = [
+        mean_row_field(observation, "jsCallback", "mean")
+        for observation in selected
+    ]
+    candidate_callback_means = [
+        mean_row_field(observation, "callback", "mean")
+        for observation in selected
+    ]
     return {
         "runs": len(selected),
         "minimumDomMatches": min(observation["domMatches"] for observation in selected),
@@ -108,6 +126,23 @@ def summarize_backend(observations, backend: str):
         "candidateCallbackMeanMs": candidate_callback_mean,
         "callbackOverheadRatio": candidate_callback_mean / js_callback_mean,
         "callbackOverheadMs": candidate_callback_mean - js_callback_mean,
+        "pairedCallbackRatio": {
+            "median": statistics.median(paired_ratios),
+            "minimum": min(paired_ratios),
+            "maximum": max(paired_ratios),
+        },
+        "pairedCallbackOverheadMs": {
+            "median": statistics.median(paired_deltas),
+            "minimum": min(paired_deltas),
+            "maximum": max(paired_deltas),
+        },
+        "absoluteCallbackRangeMs": {
+            "js": {"minimum": min(js_callback_means), "maximum": max(js_callback_means)},
+            "candidate": {
+                "minimum": min(candidate_callback_means),
+                "maximum": max(candidate_callback_means),
+            },
+        },
         "jsPhases": {
             field: statistics.median(
                 mean_row_field(observation, "jsPhases", field)
@@ -118,6 +153,14 @@ def summarize_backend(observations, backend: str):
         "candidatePhases": {
             field: statistics.median(
                 mean_row_field(observation, "phases", field)
+                for observation in selected
+            )
+            for field in phase_fields
+        },
+        "candidatePhaseShareOfCallback": {
+            field: statistics.median(
+                mean_row_field(observation, "phases", field)
+                / mean_row_field(observation, "callback", "mean")
                 for observation in selected
             )
             for field in phase_fields
@@ -172,6 +215,9 @@ def main():
                         page.goto(url)
                         page.wait_for_function(
                             "document.body.dataset.ready === 'true'", timeout=60_000
+                        )
+                        page.evaluate(
+                            "document.body.dataset.suppressPhaseCharts = 'true'"
                         )
                         page.locator("#comparison-vir-timing").check()
                         fir_available = not page.locator(
@@ -233,6 +279,7 @@ def main():
             "runs": args.runs,
             "freshBrowserContextPerObservation": True,
             "balancedBackendOrder": True,
+            "phaseVisualizationSuppressed": True,
         },
         "observations": observations,
         "summaries": summaries,
@@ -245,8 +292,8 @@ def main():
             f"{backend.upper()}: {summary['minimumDomMatches']}/{summary['rowCount']} "
             f"DOM matches, median JS {summary['jsCallbackMeanMs']:.3f} ms, "
             f"candidate {summary['candidateCallbackMeanMs']:.3f} ms, "
-            f"{summary['callbackOverheadRatio']:.2f}x JS "
-            f"({summary['callbackOverheadMs'] * 1000:+.1f} us)"
+            f"paired median {summary['pairedCallbackRatio']['median']:.2f}x JS "
+            f"({summary['pairedCallbackOverheadMs']['median'] * 1000:+.1f} us)"
         )
     print(f"wrote {report_path}")
 

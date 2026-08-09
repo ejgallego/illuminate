@@ -974,6 +974,13 @@ def test_animation_comparison_dashboard(page):
         .inner_text()
         .rstrip("×")
     ) > 0
+    page.evaluate("document.body.dataset.suppressPhaseCharts = 'true'")
+    page.locator("#comparison-vir-timing").check()
+    assert page.locator("#comparison-vir-timing").get_attribute("aria-expanded") == "false"
+    assert page.locator("[data-row-phase-comparison]:visible").count() == 0
+    assert page.locator("[data-aggregate-phases]:visible").count() == 0
+    page.locator("#comparison-vir-timing").uncheck()
+    page.evaluate("delete document.body.dataset.suppressPhaseCharts")
     page.locator("#comparison-vir-timing").check()
     assert page.locator("#comparison-vir-timing").get_attribute("aria-expanded") == "true"
     assert page.locator(".phase-metric:visible").count() == 0

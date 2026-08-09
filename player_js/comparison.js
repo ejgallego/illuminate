@@ -119,6 +119,12 @@
     var nativeRequestAnimationFrame = window.requestAnimationFrame.bind(window);
     var nativeCancelAnimationFrame = window.cancelAnimationFrame.bind(window);
 
+    function detailedChartsEnabled() {
+        return (
+            Boolean(phaseTiming?.checked) && document.body.dataset.suppressPhaseCharts !== "true"
+        );
+    }
+
     /** @param {string} owner @param {"js" | "vir" | "fir"} engine */
     function registerMetrics(owner, engine) {
         /** @type {PlayerMetrics} */
@@ -1106,20 +1112,21 @@
         );
         phaseTiming = virTiming;
         function updateVirTiming() {
+            var showDetailedCharts = detailedChartsEnabled();
             runtime.setCallbackTimingObserver(
                 virTiming.checked && currentBackend === "vir-full" ? recordVirCallbackTiming : null,
             );
-            virTiming.setAttribute("aria-expanded", String(virTiming.checked));
+            virTiming.setAttribute("aria-expanded", String(showDetailedCharts));
             for (var panel of document.querySelectorAll(".phase-metric")) {
                 if (panel instanceof HTMLElement) panel.hidden = true;
             }
             for (var comparison of document.querySelectorAll("[data-row-phase-comparison]")) {
-                if (comparison instanceof HTMLElement) comparison.hidden = !virTiming.checked;
+                if (comparison instanceof HTMLElement) comparison.hidden = !showDetailedCharts;
             }
             var aggregatePhases = /** @type {HTMLElement | null} */ (
                 document.querySelector("[data-aggregate-phases]")
             );
-            if (aggregatePhases) aggregatePhases.hidden = !virTiming.checked;
+            if (aggregatePhases) aggregatePhases.hidden = !showDetailedCharts;
         }
         virTiming.addEventListener("change", updateVirTiming);
 
@@ -1429,7 +1436,7 @@
                     candidatePhases,
                     jsMetric.mean,
                     candidateMetric.mean,
-                    virTiming.checked,
+                    detailedChartsEnabled(),
                     currentBackend,
                 );
                 for (var pair of [
@@ -1546,7 +1553,7 @@
                 averagePhaseAggregate(engineTotals.candidate.phases),
                 jsMean,
                 candidateMean,
-                virTiming.checked,
+                detailedChartsEnabled(),
                 currentBackend,
             );
         }
