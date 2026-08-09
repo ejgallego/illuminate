@@ -231,8 +231,7 @@ at this boundary.
 
 ### Scalar tick experiment
 
-The FIR generation lane produced a provisional constructor-specific
-entry:
+The FIR generation lane produced a constructor-specific entry:
 
 ```text
 dispatchTick(player, timestamp)
@@ -251,12 +250,11 @@ gave:
 
 The scalar path removes 62–64% of event encoding, but execute and
 decode are unchanged within noise. This is a worthwhile small hot-path
-specialization, not a substitute for fixing state transfer. These
-numbers are provisional: the measured 56,156-byte Wasm package has
-SHA-256
-`8b13c8124ba7235e2a00cec154f42d406e6f568f071f51ec831bbb95486ae3f5` and
-was generated from an explicitly dirty FIR worktree. Illuminate must
-consume only a later clean immutable package.
+specialization, not a substitute for fixing state transfer. FIR
+reproduced the measured 56,156-byte Wasm and SHA-256
+`8b13c8124ba7235e2a00cec154f42d406e6f568f071f51ec831bbb95486ae3f5`
+from clean revision `ac7467f3`; Illuminate now consumes that immutable
+package locally.
 
 ## Completed gates and resulting actions
 
@@ -315,14 +313,26 @@ Do not start with `RuntimeRef`: paired evidence prices retained
 ownership at only about 5–6 µs while avoiding 38–46 µs of repeated
 marshal/decode work.
 
-### P4 — scalar tick path: provisionally complete
+### P4 — scalar tick path: consumed locally
 
 Owner: FIR first; VIR only if it generalizes.
 
-Generic `dispatch(player, PlayerEvent)` remains the oracle. The
-constructor-specific path removes the event allocation and saves
-4.6–8.8% median wall time. Consume it after FIR publishes a clean
-immutable package; it remains ranked behind state synchronization.
+Generic `dispatch(player, PlayerEvent)` remains the oracle. Illuminate
+now consumes the clean immutable package at FIR revision `ac7467f3`.
+Only requestAnimationFrame ticks use the constructor-specific entry;
+the 107-trace suite still exercises generic structured dispatch. The
+hot path removes the event allocation, uses zero host scratch bytes,
+and saved 4.6–8.8% median wall time in the balanced A/B experiment.
+Publishing that FIR revision on a named `ejgallego/lean-fir` branch is
+still required for remote reproducibility. State synchronization
+remains the next higher-value target.
+
+After consumer integration, the three-run DOM-inclusive dashboard
+measured FIR at a paired median `2.00x` JavaScript (`1.93x–2.10x`), or
+72.7 µs median callback overhead, with 16/16 DOM matches. FIR's
+rolling phase means included 40.5 µs execute and 40.9 µs decode/state
+sync; input encoding was only 2.6 µs. This confirms that further event
+marshaling work is no longer the priority.
 
 ### P5 — make browser comparisons reproducible
 

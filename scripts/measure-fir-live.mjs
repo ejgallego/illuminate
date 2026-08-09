@@ -77,6 +77,11 @@ assert.equal(
     adapterModule.ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION,
     "fir.illuminate-player.persistent-checkpoint/v2",
 );
+assert.equal(
+    adapterModule.ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION,
+    "fir.illuminate-player.hot-event/v1",
+);
+assert.equal(typeof adapterModule.createIlluminateSelectionPlayerAdapter, "function");
 assert.equal(sha256(wasmBytes), build.wasm.sha256);
 
 const adapter = await adapterModule.createIlluminateSelectionPlayerAdapter({
@@ -154,7 +159,7 @@ function measureDispatch(animation) {
     startPlayer(created.player, animation);
     let timestamp = 0.125;
     for (let index = 0; index < warmupTicks; index += 1) {
-        const tick = adapter.dispatch(created.player, { kind: "tick", timestamp });
+        const tick = adapter.dispatchTick(created.player, timestamp);
         assert.equal(tick.ok, true, tick.error);
         resumeIfNeeded(created.player, animation, tick.action);
         timestamp += 1000 / 60;
@@ -164,7 +169,7 @@ function measureDispatch(animation) {
     const checkpoint = created.memory.persistentCheckpoint;
     for (let index = 0; index < measuredTicks; index += 1) {
         const wallStarted = performance.now();
-        const tick = adapter.dispatch(created.player, { kind: "tick", timestamp });
+        const tick = adapter.dispatchTick(created.player, timestamp);
         const wallMs = performance.now() - wallStarted;
         assert.equal(tick.ok, true, tick.error);
         assert.equal(tick.memory.frontierBefore, checkpoint);
@@ -233,6 +238,7 @@ const report = {
         adapterApi: adapterModule.ILLUMINATE_SELECTION_PLAYER_ADAPTER_API_VERSION,
         inputLayout: adapterModule.ILLUMINATE_SELECTION_PLAYER_INPUT_LAYOUT_VERSION,
         ownership: adapterModule.ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION,
+        hotEvent: adapterModule.ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION,
         startupTimings: adapter.startupTimings,
         node: process.version,
         v8: process.versions.v8,

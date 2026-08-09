@@ -28,6 +28,7 @@ interface AnimData {
 interface FirComparisonAdapter {
     createPlayer(animation: AnimData): unknown;
     dispatch(player: unknown, event: unknown): unknown;
+    dispatchTick(player: unknown, timestamp: number): unknown;
     disposePlayer(player: unknown): void;
 }
 

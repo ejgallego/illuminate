@@ -147,8 +147,8 @@ pure structured transition and generic dispatch entry as the
 differential oracle. Illuminate should not add `Nat`/`UInt` conversion
 layers to obtain this result.
 
-The generation lane's provisional `dispatchTick(player, timestamp)` is
-independently promising. In eight balanced rounds of 240 samples per
+The generation lane's `dispatchTick(player, timestamp)` is an accepted
+independent improvement. In eight balanced rounds of 240 samples per
 mode it preserved action digests, sent binary64 bits through an `i64`,
 and changed:
 
@@ -159,12 +159,12 @@ scratch:      40 bytes / 1 allocation -> 0 bytes / 0 allocations
 ```
 
 That is a 4.6–8.8% median wall improvement and a 62–64% event-encode
-improvement. It does not reduce state decode/synchronization. The
-measured package was intentionally not accepted because FIR reported
-`dirty: true`; its 56,156-byte Wasm SHA-256 was
-`8b13c8124ba7235e2a00cec154f42d406e6f568f071f51ec831bbb95486ae3f5`.
-Please publish a clean immutable package before Illuminate consumes
-this entry.
+improvement. It does not reduce state decode/synchronization. FIR
+later reproduced the same 56,156-byte Wasm and SHA-256
+`8b13c8124ba7235e2a00cec154f42d406e6f568f071f51ec831bbb95486ae3f5`
+from clean revision `ac7467f3`. Illuminate now consumes that immutable
+package locally; publishing the FIR revision on a named branch remains
+the reproducibility follow-up.
 
 ## Final v3 measurements
 

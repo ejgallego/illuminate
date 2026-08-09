@@ -1032,11 +1032,21 @@ def test_animation_comparison_dashboard(page):
     assert page.evaluate(
         """() => [...document.querySelectorAll(
             '[data-row-phase-group="execute"] [data-row-phase-value]'
+          )].every(node => Number.parseFloat(node.textContent || '0') >= 0)"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-row-phase-group="execute"] [data-row-phase-value="candidate"]'
           )].every(node => Number.parseFloat(node.textContent || '0') > 0)"""
     )
     assert page.evaluate(
         """() => [...document.querySelectorAll(
             '[data-row-phase-group="execute"] [data-row-phase-fill]'
+          )].every(node => Number.parseFloat(node.style.height || '0') >= 0)"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-row-phase-group="execute"] [data-row-phase-fill="candidate"]'
           )].every(node => Number.parseFloat(node.style.height || '0') > 0)"""
     )
     assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0

@@ -72,6 +72,7 @@ const animation = {
 };
 
 const dispatched = [];
+const dispatchedTicks = [];
 const disposed = [];
 const handle = Object.freeze({ id: 17 });
 const responses = [
@@ -105,6 +106,13 @@ const adapter = {
         assert.ok(response, `unexpected ${event.kind} event`);
         return { ok: true, ...response };
     },
+    dispatchTick(player, timestamp) {
+        assert.equal(player, handle);
+        dispatchedTicks.push(timestamp);
+        const response = responses.shift();
+        assert.ok(response, "unexpected tick event");
+        return { ok: true, ...response };
+    },
     disposePlayer(player) {
         disposed.push(player);
     },
@@ -131,16 +139,16 @@ host.advance();
 assert.deepEqual(dispatched[0], { kind: "advance" });
 assert.deepEqual([...scheduler.callbacks.keys()], [1]);
 scheduler.fire(1, 123.125);
-assert.deepEqual(dispatched[1], { kind: "tick", timestamp: 123.125 });
+assert.deepEqual(dispatchedTicks, [123.125]);
 assert.deepEqual([...scheduler.callbacks.keys()], [2]);
 assert.equal(host.snapshot().segment, 1);
 
 host.pause();
-assert.deepEqual(dispatched[2], { kind: "pause" });
+assert.deepEqual(dispatched[1], { kind: "pause" });
 assert.deepEqual(scheduler.cancelled, [2]);
 assert.equal(scheduler.callbacks.size, 0);
 host.seek(0);
-assert.deepEqual(dispatched[3], { kind: "seek", frame: 0 });
+assert.deepEqual(dispatched[2], { kind: "seek", frame: 0 });
 assert.equal(host.snapshot().frame, 0);
 
 host.dispose();

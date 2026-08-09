@@ -49,6 +49,7 @@
  * @typedef {{
  *   createPlayer(animation: AnimData): unknown,
  *   dispatch(player: unknown, event: unknown): unknown,
+ *   dispatchTick(player: unknown, timestamp: number): unknown,
  *   disposePlayer(player: unknown): void
  * }} ComparisonFirAdapter
  * @typedef {{
@@ -1075,11 +1076,13 @@
                         "lean-4.32-Illuminate.Animation.SelectionAnimation/v4" ||
                     module.ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION !==
                         "fir.illuminate-player.persistent-checkpoint/v2" ||
+                    module.ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION !==
+                        "fir.illuminate-player.hot-event/v1" ||
                     typeof module.fetchIlluminateSelectionPlayerAdapter !== "function"
                 ) {
                     throw new Error("staged FIR live package has an unsupported contract");
                 }
-                return /** @type {ComparisonFirAdapter} */ (
+                var loaded = /** @type {ComparisonFirAdapter} */ (
                     await module.fetchIlluminateSelectionPlayerAdapter(
                         new URL(firWasmUrl, window.location.href),
                         {
@@ -1088,6 +1091,10 @@
                         },
                     )
                 );
+                if (typeof loaded.dispatchTick !== "function") {
+                    throw new Error("staged FIR live package does not expose scalar tick dispatch");
+                }
+                return loaded;
             } catch (error) {
                 console.info("FIR live comparison backend is unavailable", error);
                 return null;

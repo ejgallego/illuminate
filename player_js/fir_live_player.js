@@ -43,6 +43,7 @@
  * @typedef {{
  *   createPlayer: (animation: AnimData) => FirCreateResult,
  *   dispatch: (player: unknown, event: FirPlayerEvent) => FirDispatchResult,
+ *   dispatchTick: (player: unknown, timestamp: number) => FirDispatchResult,
  *   disposePlayer: (player: unknown) => void
  * }} FirLivePlayerAdapter
  * @typedef {{
@@ -292,7 +293,13 @@ export function createFirLivePlayerHost(
     /** @param {number} timestamp */
     function tick(timestamp) {
         pendingFrame = null;
-        if (!disposed) dispatch({ kind: "tick", timestamp });
+        if (disposed) return;
+        requireLive();
+        const measuring = observer !== null && (observeDispatch?.() ?? true);
+        const started = measuring ? firHostNow() : 0;
+        const result = adapter.dispatchTick(player, timestamp);
+        const measurement = measuring ? { started, adapterCompleted: firHostNow() } : null;
+        consume(result, "tick", measurement);
     }
 
     if (created.scheduleNextFrame) schedule();

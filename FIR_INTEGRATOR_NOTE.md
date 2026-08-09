@@ -87,24 +87,25 @@ oracle.
 The package checksum gate and packaged smoke pass, including 10,000
 ticks at a flat checkpoint and zero hot-event scratch bytes.
 
-## Illuminate acceptance after publication
+## Illuminate consumer acceptance
 
-After the FIR branch is published, Illuminate will:
+Illuminate has now completed the consumer-side work locally:
 
-1. update the immutable package ratchet to the seven-function export
+1. the immutable package ratchet requires the seven-function export
    surface;
-2. require the hot-event capability and `dispatchTick` adapter method;
-3. keep generic dispatch in the 107-trace differential suite;
-4. add scalar/generic tick equivalence, bit-adjacent Float, lifecycle,
-   and frontier checks;
-5. switch only animation-frame ticks to `dispatchTick` in the live
-   host;
-6. rerun package smoke, 107-way differential, TypeScript, Lean,
-   structural, visual, and dashboard performance checks.
+2. the host requires the hot-event capability and `dispatchTick`
+   adapter method;
+3. generic dispatch remains in the 107-trace differential suite;
+4. scalar/generic tick equivalence, bit-adjacent Float, lifecycle, and
+   frontier checks pass;
+5. only animation-frame ticks use `dispatchTick` in the live host;
+6. package smoke, the 107-way differential, TypeScript, all 523 Lean
+   tests, `lake shake`, and all 64 structural/visual browser tests
+   pass.
 
-Measured provisionally before the clean publication, the scalar entry
-removed the 40-byte event allocation, reduced event encoding by
-62–64%, and reduced median callback time by 4.6–8.8%. It is a small
-independent improvement; the next high-value FIR target remains
-in-place resident state synchronization, which currently accounts for
-42–46% of `decodeMs`.
+The clean package removes the 40-byte event allocation. The balanced
+A/B reduced event encoding by 62–64% and median callback time by
+4.6–8.8%. Publishing FIR revision `ac7467f3` on a named branch is
+still required. The next task is specified in
+`FIR_STATE_SYNC_HANDOFF.md`: in-place resident state synchronization
+currently accounts for 42–46% of `decodeMs`.

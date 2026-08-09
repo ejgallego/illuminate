@@ -43,10 +43,12 @@ const [adapterModule, build, manifest, wasmBytes] = await Promise.all([
 const {
     createIlluminateSelectionPlayerAdapter,
     ILLUMINATE_SELECTION_PLAYER_ADAPTER_API_VERSION,
+    ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION,
     ILLUMINATE_SELECTION_PLAYER_INPUT_LAYOUT_VERSION,
     ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION,
 } = adapterModule;
 assert.equal(typeof createIlluminateSelectionPlayerAdapter, "function");
+assert.equal(typeof adapterModule.fetchIlluminateSelectionPlayerAdapter, "function");
 assert.equal(ILLUMINATE_SELECTION_PLAYER_ADAPTER_API_VERSION, "fir.illuminate-player.browser/v4");
 assert.equal(
     ILLUMINATE_SELECTION_PLAYER_INPUT_LAYOUT_VERSION,
@@ -56,6 +58,7 @@ assert.equal(
     ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION,
     "fir.illuminate-player.persistent-checkpoint/v2",
 );
+assert.equal(ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION, "fir.illuminate-player.hot-event/v1");
 assert.equal(
     build.capabilities?.browserAdapter?.apiVersion,
     ILLUMINATE_SELECTION_PLAYER_ADAPTER_API_VERSION,
@@ -65,6 +68,15 @@ assert.equal(
     ILLUMINATE_SELECTION_PLAYER_INPUT_LAYOUT_VERSION,
 );
 assert.equal(build.capabilities?.ownership?.version, ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION);
+assert.equal(build.capabilities?.hotEvent?.version, ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION);
+assert.equal(build.capabilities?.hotEvent?.method, "dispatchTick(player, timestamp)");
+assert.deepEqual(build.capabilities?.browserAdapter?.methods, [
+    "createPlayer",
+    "dispatch",
+    "dispatchTick",
+    "disposePlayer",
+    "replayTrace",
+]);
 
 function sha256(value) {
     return createHash("sha256").update(value).digest("hex");
@@ -81,11 +93,28 @@ assert.deepEqual(
     [
         "Illuminate.AnimationPlayer.initialSelectionLive",
         "Illuminate.AnimationPlayer.transitionSelectionLive",
+        "IlluminateFirNative.transitionSelectionTickLive._fir_bit_exact",
         "fir_heap_alloc",
         "fir_heap_frontier",
         "fir_heap_rewind",
         "fir_heap_set_frontier",
     ].sort(),
+);
+assert.equal(build.sources?.fir?.commit, "ac7467f3af9598400be1f175510aff339ac6113a");
+assert.equal(build.sources?.fir?.dirty, false);
+assert.equal(build.sources?.illuminate?.commit, "5a5f2b7d1ced7db4eed405315146b9687fd05252");
+assert.equal(build.sources?.illuminate?.dirty, false);
+assert.equal(build.wasm.functionImportCount, 0);
+assert.equal(build.wasm.memoryImportCount, 0);
+assert.equal(build.wasm.memoryOwner, "module");
+assert.deepEqual(build.wasm.memoryExports, ["memory"]);
+assert.equal(build.wasm.functionExportCount, 7);
+assert.equal(build.wasm.byteLength, 56156);
+assert.equal(build.wasm.sha256, "8b13c8124ba7235e2a00cec154f42d406e6f568f071f51ec831bbb95486ae3f5");
+assert.equal(build.wasm.base.byteLength, 20761);
+assert.equal(
+    build.wasm.base.sha256,
+    "b2b90d44c6a053eb5f59ef6330e44b9e0e2c0a0f160e832f48b003725a663314",
 );
 assert.deepEqual(
     WebAssembly.Module.exports(module).filter(({ kind }) => kind !== "function"),
@@ -224,6 +253,33 @@ adapter.disposePlayer(created.player);
 adapter.disposePlayer(created.player);
 assert.throws(() => adapter.dispatch(created.player, { kind: "advance" }), /disposed/);
 
+const genericTickPlayer = adapter.createPlayer(animation);
+const scalarTickPlayer = adapter.createPlayer(animation);
+assert.equal(genericTickPlayer.ok, true, genericTickPlayer.error);
+assert.equal(scalarTickPlayer.ok, true, scalarTickPlayer.error);
+const genericStarted = adapter.dispatch(genericTickPlayer.player, { kind: "advance" });
+const scalarStarted = adapter.dispatch(scalarTickPlayer.player, { kind: "advance" });
+assert.equal(genericStarted.ok, true, genericStarted.error);
+assert.equal(scalarStarted.ok, true, scalarStarted.error);
+assert.deepEqual(scalarStarted.action, genericStarted.action);
+for (const timestamp of [0, adjacentFloat(100, -1), 100, adjacentFloat(100, 1), 300.125]) {
+    const generic = adapter.dispatch(genericTickPlayer.player, { kind: "tick", timestamp });
+    const scalar = adapter.dispatchTick(scalarTickPlayer.player, timestamp);
+    assert.equal(generic.ok, true, generic.error);
+    assert.equal(scalar.ok, true, scalar.error);
+    assert.deepEqual(scalar.action, generic.action, `scalar tick diverged at ${timestamp}`);
+    assert.equal(scalar.scheduleNextFrame, generic.scheduleNextFrame);
+    assert.ok(generic.memory.scratchBytes > 0);
+    assert.ok(generic.memory.scratchAllocationCalls > 0);
+    assert.equal(scalar.memory.scratchBytes, 0);
+    assert.equal(scalar.memory.scratchAllocationCalls, 0);
+    assert.equal(scalar.memory.frontierAfterEncode, scalar.memory.persistentCheckpoint);
+    assert.equal(scalar.memory.postRewindFrontier, scalar.memory.persistentCheckpoint);
+}
+adapter.disposePlayer(genericTickPlayer.player);
+adapter.disposePlayer(scalarTickPlayer.player);
+assert.throws(() => adapter.dispatchTick(scalarTickPlayer.player, 50), /disposed/);
+
 const left = adapter.createPlayer(animation);
 const right = adapter.createPlayer(animation);
 assert.equal(left.ok, true, left.error);
@@ -324,11 +380,10 @@ const checkpoint = started.memory.persistentCheckpoint;
 let pagesAfterWarmup;
 let peakFrontier = checkpoint;
 for (let index = 0; index < 10_000; index += 1) {
-    const tick = adapter.dispatch(longRunning.player, {
-        kind: "tick",
-        timestamp: 0.125 + index * (1000 / 60),
-    });
+    const tick = adapter.dispatchTick(longRunning.player, 0.125 + index * (1000 / 60));
     assert.equal(tick.ok, true, tick.error);
+    assert.equal(tick.memory.scratchBytes, 0);
+    assert.equal(tick.memory.scratchAllocationCalls, 0);
     assert.equal(tick.memory.frontierBefore, checkpoint);
     assert.equal(tick.memory.postRewindFrontier, checkpoint);
     assert.ok(tick.memory.peakFrontier >= checkpoint);
@@ -361,6 +416,7 @@ console.log(
             wasmBytes: wasmBytes.byteLength,
             wasmSha256: sha256(wasmBytes),
             adapterApi: ILLUMINATE_SELECTION_PLAYER_ADAPTER_API_VERSION,
+            hotEvent: ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION,
             inputLayout: ILLUMINATE_SELECTION_PLAYER_INPUT_LAYOUT_VERSION,
             ownership: ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION,
             eventConstructors: [...new Set(events.map(({ kind }) => kind))].sort(),
