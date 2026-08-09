@@ -1,22 +1,23 @@
 # FIR-native player performance and live integration handoff
 
-## FIR PR #2 merge dependency
+## FIR branch dependency
 
 The corrected package depends on Illuminate commit
 `6f16cdc3d4320c093b53a9d381b92bfbb689b2ce`
 (`fix: preserve initial animation step`). It is reachable from the
-pushed branch `ejgallego/feat/vir-performance`, but is not yet
-reachable from `leanprover/illuminate` main or an upstream Illuminate
-pull request. It also cannot be landed as an isolated cherry-pick: the
-player source and differential runner it changes are introduced by
-earlier commits on the same animation-runtime branch.
+pushed branch `ejgallego/feat/vir-performance`. Illuminate development
+for this integration remains on `ejgallego` branches and does not use
+upstream pull requests. The fix also cannot be treated as an isolated
+cherry-pick: the player source and differential runner it changes are
+introduced by earlier commits on the same animation-runtime branch.
 
-Therefore FIR PR #2 should remain blocked until the Illuminate runtime
-branch is submitted and landed, or until FIR records and checks out an
-explicit immutable Illuminate revision. After that, regenerate or
-ratchet the FIR package against the landed revision. In the FIR PR
-README, “v3 artifact is unchanged” should be replaced with “v3 API
-remains unchanged”; the closure hashes and Wasm size do change.
+FIR should therefore record the repository, branch, and exact
+Illuminate revision in its integration tree and make `check.sh` verify
+the checked-out revision before generation. This makes the branch-only
+workflow reproducible without depending on an upstream merge. In the
+FIR documentation, “v3 artifact is unchanged” should be replaced with
+“v3 API remains unchanged”; the closure hashes and Wasm size do
+change.
 
 ## Scope and accepted artifacts
 
