@@ -34,7 +34,8 @@ Six results are now strong enough to drive the next work:
 The priority order is therefore:
 
 1. give FIR an optional timing-free dispatch path so production and
-   diagnostic adapter costs can be measured separately;
+   diagnostic adapter costs can be measured separately, following
+   [FIR_UNTIMED_DISPATCH_HANDOFF.md](FIR_UNTIMED_DISPATCH_HANDOFF.md);
 2. give FIR a generated in-place resident-state update or equivalent
    compact state ABI, while retaining generic dispatch as the oracle;
 3. preserve interpreter-local declaration/symbol caches across VIR's

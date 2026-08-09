@@ -3,6 +3,11 @@
 This task uses branch-only coordination. Keep the work on a named
 `ejgallego/lean-fir` branch and do not open a pull request.
 
+Run the separate `FIR_UNTIMED_DISPATCH_HANDOFF.md` experiment first.
+Do not combine its adapter-diagnostics change with this resident-state
+experiment; Illuminate needs independent packages to attribute each
+boundary improvement.
+
 ## Starting point
 
 Use the clean scalar-tick FIR head and publish it before building on
