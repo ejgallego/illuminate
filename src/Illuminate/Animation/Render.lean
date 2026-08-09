@@ -247,7 +247,7 @@ Renders animations as a side-by-side JavaScript and Lean runtime performance das
 
 Every example is mounted twice from the same compiled animation data. The page
 uses VIR by default, discovers an independently staged persistent FIR package,
-and reports rolling callback FPS, runtime phases, memory, and host rendering cost.
+and reports rolling callback FPS, persistent callback peaks, runtime phases, memory, and host rendering cost.
 -/
 def renderAnimationComparisonHTML
     (examples : Array (String × CompiledAnimation))
@@ -272,7 +272,7 @@ body \{ margin: 0; min-width: 320px; background: radial-gradient(circle at 20% 0
 .eyebrow \{ margin: 0 0 10px; color: #83a8ff; font-size: 12px; font-weight: 800; letter-spacing: .16em; text-transform: uppercase; }
 h1 \{ margin: 0; max-width: 900px; font-size: clamp(32px, 5vw, 64px); line-height: .98; letter-spacing: -.045em; }
 .lede \{ max-width: 780px; margin: 20px 0 0; color: #aebbd9; font-size: 16px; line-height: 1.65; }
-.toolbar \{ position: sticky; z-index: 5; top: 0; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px clamp(18px, 5vw, 72px); background: rgb(11 16 32 / .92); border-bottom: 1px solid #263458; backdrop-filter: blur(14px); }
+.toolbar \{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px clamp(18px, 5vw, 72px); background: #0b1020; border-bottom: 1px solid #263458; }
 button \{ padding: 9px 14px; border: 1px solid #4a6fca; border-radius: 8px; background: #3158b2; color: white; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
 button:hover \{ background: #3b67cb; }
 button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
@@ -282,6 +282,16 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .auto select \{ padding: 5px 7px; border: 1px solid #344362; border-radius: 6px; background: #172039; color: #c6d0e7; }
 .profiling-toggle span \{ color: #8292b3; font-size: 11px; }
 #comparison-status \{ color: #8ea2c7; font-size: 12px; }
+.sticky-peaks \{ position: sticky; z-index: 6; top: 0; display: flex; gap: 8px; align-items: stretch; justify-content: flex-end; min-height: 42px; padding: 5px clamp(18px, 5vw, 72px); background: #0b1020; border-bottom: 1px solid #2a395f; box-shadow: 0 6px 16px rgb(0 0 0 / .14); }
+.sticky-peaks > span \{ display: grid; grid-template-columns: auto auto; gap: 0 7px; align-content: center; min-width: 108px; padding: 2px 7px; }
+.sticky-peaks > span + span \{ border-left: 1px solid #2a395f; }
+.sticky-peaks b \{ color: #8292b3; font-size: 8px; letter-spacing: .06em; text-transform: uppercase; }
+.sticky-peaks strong \{ color: #f2f5ff; font: 700 12px ui-monospace, monospace; font-variant-numeric: tabular-nums; text-align: right; }
+.sticky-peaks small \{ grid-column: 1 / -1; overflow: hidden; max-width: 170px; color: #7082a5; font: 8px ui-monospace, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.sticky-peaks .js strong \{ color: #f4cc55; }
+.sticky-peaks .candidate strong \{ color: #8fb0ff; }
+.sticky-peaks .ratio \{ min-width: 72px; }
+.sticky-peaks .peak-clear \{ align-self: center; padding: 5px 7px; font-size: 9px; }
 .summaries \{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: min(100% - 36px, 1320px); margin: 24px auto; }
 .summary \{ display: flex; gap: 22px; align-items: center; min-height: 90px; padding: 18px 22px; background: #121a30; border: 1px solid #2a395f; border-radius: 14px; box-shadow: 0 14px 40px rgb(0 0 0 / .18); }
 .summary h2 \{ margin: 0 auto 0 0; font-size: 15px; }
@@ -370,7 +380,8 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .example footer input \{ width: 100%; accent-color: #6c91eb; }
 .example output \{ min-width: 74px; color: #8495b6; font: 11px ui-monospace, monospace; text-align: right; }
 .method \{ width: min(100% - 36px, 1320px); margin: -42px auto 60px; color: #7889aa; font-size: 11px; line-height: 1.6; }
-@media (max-width: 780px) \{ .pair, .summaries, .aggregate-insights \{ grid-template-columns: 1fr; } .aggregate-phase-chart \{ grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 18px; } .player + .player \{ border-top: 1px solid #263453; border-left: 0; } .example > footer \{ grid-template-columns: 1fr 1fr; } .example footer input \{ grid-column: 1 / -1; } .example output \{ display: none; } .summary \{ min-height: 74px; } }
+@media (max-width: 980px) \{ .sticky-peaks \{ justify-content: flex-end; } }
+@media (max-width: 780px) \{ .pair, .summaries, .aggregate-insights \{ grid-template-columns: 1fr; } .aggregate-phase-chart \{ grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 18px; } .player + .player \{ border-top: 1px solid #263453; border-left: 0; } .example > footer \{ grid-template-columns: 1fr 1fr; } .example footer input \{ grid-column: 1 / -1; } .example output \{ display: none; } .summary \{ min-height: 74px; } .sticky-peaks \{ justify-content: stretch; } .sticky-peaks > span \{ min-width: 0; flex: 1; } .sticky-peaks small \{ display: none; } }
 </style>
 </head>
 <body data-ready=\"false\">
@@ -388,9 +399,15 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
   <label class=\"auto profiling-toggle\"><input id=\"comparison-vir-timing\" type=\"checkbox\" aria-controls=\"comparison-grid aggregate-phases\" aria-expanded=\"false\"> Detailed callback phases <span>adds measurement overhead</span></label>
   <span id=\"comparison-status\" data-state=\"loading\">Loading one shared VIR runtime…</span>
 </nav>
+<section class=\"sticky-peaks\" aria-label=\"Persistent callback peaks\">
+  <span class=\"js\"><b>JS run peak</b><strong data-sticky-peak=\"js\">—</strong><small data-sticky-peak-detail=\"js\">waiting for callbacks</small></span>
+  <span class=\"candidate\"><b><span data-sticky-candidate-name>VIR selection</span> peak</b><strong data-sticky-peak=\"candidate\">—</strong><small data-sticky-peak-detail=\"candidate\">waiting for callbacks</small></span>
+  <span class=\"ratio\"><b>peak ratio</b><strong data-sticky-peak-ratio>—</strong><small>independent high-water marks</small></span>
+  <button id=\"comparison-clear-peaks\" class=\"quiet peak-clear\" type=\"button\">Clear</button>
+</section>
 <section class=\"summaries\" aria-label=\"Aggregate statistics\">
-  <article class=\"summary\" data-summary=\"js\"><span class=\"engine-dot js\"></span><h2>JavaScript aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span></article>
-  <article class=\"summary\" data-summary=\"candidate\"><span class=\"engine-dot vir\"></span><h2>Lean · VIR selection aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span><span><strong data-summary-stat=\"ratio\">—</strong><small>callback / paired JS</small></span></article>
+  <article class=\"summary\" data-summary=\"js\"><span class=\"engine-dot js\"></span><h2>JavaScript aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span><span><strong data-summary-stat=\"peak\">—</strong><small>run peak callback</small></span></article>
+  <article class=\"summary\" data-summary=\"candidate\"><span class=\"engine-dot vir\"></span><h2>Lean · VIR selection aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span><span><strong data-summary-stat=\"peak\">—</strong><small>run peak callback</small></span><span><strong data-summary-stat=\"ratio\">—</strong><small>callback / paired JS</small></span></article>
   <article class=\"aggregate-insights\">
     <section><h2>Aggregate callback overhead</h2><p>Whole candidate callback against the paired JavaScript callback; the gold marker is 1×.</p><div class=\"aggregate-overhead\" data-aggregate-overhead data-overhead-state=\"waiting\"><div class=\"overhead-ratio\"><div><strong data-overhead-value>—</strong><small>candidate / paired JavaScript</small></div><output data-overhead-detail>waiting for paired callbacks</output><span class=\"overhead-track\"><i data-overhead-fill></i><b title=\"JavaScript baseline\"></b></span></div></div></section>
     <section class=\"aggregate-cpu\"><h2>Rolling one-core share</h2><p>Paired bars use the larger current share as their visual scale.</p><div class=\"aggregate-cpu-row\"><span>JavaScript</span><span class=\"aggregate-cpu-track\"><i class=\"js\" data-aggregate-cpu-fill=\"js\"></i></span><output data-aggregate-cpu-value=\"js\">0.0%</output></div><div class=\"aggregate-cpu-row\"><span data-aggregate-candidate-name>VIR selection</span><span class=\"aggregate-cpu-track\"><i class=\"candidate\" data-aggregate-cpu-fill=\"candidate\"></i></span><output data-aggregate-cpu-value=\"candidate\">0.0%</output></div></section>
@@ -409,7 +426,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
   </article>
 </section>
 <main id=\"comparison-grid\"></main>
-<p class=\"method\">Rolling two-second window. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Each overhead badge divides candidate mean callback time by the JavaScript player beside it; its gold marker is 1× and its bar is capped at 10×. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
+<p class=\"method\">FPS, CPU, mean, and p95 use a rolling two-second window. Run peaks and slow-callback totals persist until cleared or the candidate backend changes. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Each overhead badge divides candidate mean callback time by the JavaScript player beside it; its gold marker is 1× and its bar is capped at 10×. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
 <script type=\"module\">
 {js}
 </script>

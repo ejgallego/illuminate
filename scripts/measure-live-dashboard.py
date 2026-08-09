@@ -74,6 +74,16 @@ def mean_row_field(observation, result_field: str, value_field: str):
     return statistics.mean(values)
 
 
+def maximum_row_field(observation, result_field: str, value_field: str):
+    """Finds one persistent high-water value across dashboard rows."""
+    values = [
+        row[result_field][value_field]
+        for row in observation["snapshot"]["rows"]
+        if row[result_field] is not None
+    ]
+    return max(values)
+
+
 def summarize_backend(observations, backend: str):
     """Takes medians of per-run row means for one candidate backend."""
     selected = [
@@ -118,6 +128,19 @@ def summarize_backend(observations, backend: str):
         mean_row_field(observation, "callback", "mean")
         for observation in selected
     ]
+    js_callback_peaks = [
+        maximum_row_field(observation, "jsCallback", "maximum")
+        for observation in selected
+    ]
+    candidate_callback_peaks = [
+        maximum_row_field(observation, "callback", "maximum")
+        for observation in selected
+    ]
+    high_water_ratios = [
+        candidate / js
+        for js, candidate in zip(js_callback_peaks, candidate_callback_peaks)
+        if js > 0
+    ]
     return {
         "runs": len(selected),
         "minimumDomMatches": min(observation["domMatches"] for observation in selected),
@@ -141,6 +164,23 @@ def summarize_backend(observations, backend: str):
             "candidate": {
                 "minimum": min(candidate_callback_means),
                 "maximum": max(candidate_callback_means),
+            },
+        },
+        "persistentCallbackPeakMs": {
+            "js": {
+                "median": statistics.median(js_callback_peaks),
+                "minimum": min(js_callback_peaks),
+                "maximum": max(js_callback_peaks),
+            },
+            "candidate": {
+                "median": statistics.median(candidate_callback_peaks),
+                "minimum": min(candidate_callback_peaks),
+                "maximum": max(candidate_callback_peaks),
+            },
+            "highWaterRatio": {
+                "median": statistics.median(high_water_ratios),
+                "minimum": min(high_water_ratios),
+                "maximum": max(high_water_ratios),
             },
         },
         "jsPhases": {
@@ -249,13 +289,15 @@ def main():
         if (summary := summarize_backend(observations, backend)) is not None
     }
     report = {
-        "schema": "illuminate.live-dashboard-phases/v3",
+        "schema": "illuminate.live-dashboard-phases/v4",
         "generatedAtUnix": time(),
         "scope": {
             "domIncluded": True,
             "paintAndCompositingIncluded": False,
             "timestampPolicy": "independent browser requestAnimationFrame callbacks",
             "rollingWindowMs": 2000,
+            "persistentCallbackPeaks": "per backend run; reset on backend change or explicit clear",
+            "callbackOrder": "JS first and candidate first balanced across rows, reversed on each reschedule",
             "sharedSelectionRenderer": ["js", "vir-selection", "fir"],
             "fullVirOwnsPatchRendering": True,
             "sharedJsFirRenderer": True,
@@ -293,7 +335,8 @@ def main():
             f"DOM matches, median JS {summary['jsCallbackMeanMs']:.3f} ms, "
             f"candidate {summary['candidateCallbackMeanMs']:.3f} ms, "
             f"paired median {summary['pairedCallbackRatio']['median']:.2f}x JS "
-            f"({summary['pairedCallbackOverheadMs']['median'] * 1000:+.1f} us)"
+            f"({summary['pairedCallbackOverheadMs']['median'] * 1000:+.1f} us), "
+            f"peak {summary['persistentCallbackPeakMs']['candidate']['median']:.3f} ms"
         )
     print(f"wrote {report_path}")
 

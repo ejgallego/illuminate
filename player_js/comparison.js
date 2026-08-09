@@ -36,6 +36,18 @@
  *   hostMs: number,
  *   adapterMs: number
  * }} PhaseAggregate
+ * @typedef {{
+ *   fps: number,
+ *   cpu: number,
+ *   mean: number,
+ *   active: number,
+ *   phases: PhaseAggregate,
+ *   maximum: number,
+ *   maximumAt: number | null,
+ *   maximumCallback: number | null,
+ *   slowCallbacks: number,
+ *   peakTitle: string
+ * }} DashboardEngineTotals
  * @typedef {(timings: RuntimeCallTimings) => void} JsSelectionObserver
  * @typedef {{
  *   owner: string,
@@ -44,7 +56,11 @@
  *   phaseSamples: RuntimePhaseSample[],
  *   creation: CreationSample | null,
  *   totalCallbacks: number,
- *   totalCpu: number
+ *   totalCpu: number,
+ *   maximumCallbackMs: number,
+ *   maximumCallbackAt: number | null,
+ *   maximumCallbackNumber: number | null,
+ *   totalSlowCallbacks: number
  * }} PlayerMetrics
  * @typedef {{
  *   createPlayer(animation: AnimData): unknown,
@@ -95,6 +111,7 @@
  *   candidate: ComparisonCandidate,
  *   jsOwner: string,
  *   candidateOwner: string,
+ *   candidateFirst: boolean,
  *   waitingSince: number | null,
  *   loopSince: number | null,
  *   finishedSince: number | null
@@ -137,8 +154,20 @@
             creation: null,
             totalCallbacks: 0,
             totalCpu: 0,
+            maximumCallbackMs: 0,
+            maximumCallbackAt: null,
+            maximumCallbackNumber: null,
+            totalSlowCallbacks: 0,
         };
         metrics.set(owner, value);
+    }
+
+    /** @param {PlayerMetrics} value */
+    function clearPersistentMetrics(value) {
+        value.maximumCallbackMs = 0;
+        value.maximumCallbackAt = null;
+        value.maximumCallbackNumber = null;
+        value.totalSlowCallbacks = 0;
     }
 
     /** @template T @param {string} owner @param {() => T} action @returns {T} */
@@ -287,6 +316,12 @@
                     value.samples.push({ time: finished, duration: duration });
                     value.totalCallbacks += 1;
                     value.totalCpu += duration;
+                    if (duration > value.maximumCallbackMs) {
+                        value.maximumCallbackMs = duration;
+                        value.maximumCallbackAt = finished;
+                        value.maximumCallbackNumber = value.totalCallbacks;
+                    }
+                    if (duration > 16.7) value.totalSlowCallbacks += 1;
                     pruneSamples(value, finished);
                 }
             }
@@ -507,6 +542,15 @@
         return formatNumber(value / 1024, 1) + " KiB";
     }
 
+    /** @param {number} value */
+    function formatDuration(value) {
+        if (!Number.isFinite(value) || value <= 0) return "—";
+        if (value < 1) {
+            return formatNumber(value * 1000, value < 0.01 ? 1 : 0) + " µs";
+        }
+        return formatNumber(value, value < 10 ? 2 : 1) + " ms";
+    }
+
     /** @param {PlayerMetrics} value @param {number} now */
     function metricSnapshot(value, now) {
         pruneSamples(value, now);
@@ -521,8 +565,8 @@
             return left - right;
         });
         var p95 = sorted.length === 0 ? 0 : sorted[Math.floor((sorted.length - 1) * 0.95)];
-        var maximum = sorted.length === 0 ? 0 : sorted[sorted.length - 1];
-        var longFrames = durations.filter(function (duration) {
+        var rollingMaximum = sorted.length === 0 ? 0 : sorted[sorted.length - 1];
+        var rollingSlowCallbacks = durations.filter(function (duration) {
             return duration > 16.7;
         }).length;
         return {
@@ -530,8 +574,13 @@
             cpuPercent: (cpu / sampleWindowMs) * 100,
             mean: durations.length === 0 ? 0 : cpu / durations.length,
             p95: p95,
-            maximum: maximum,
-            longFrames: longFrames,
+            maximum: value.maximumCallbackMs,
+            maximumAt: value.maximumCallbackAt,
+            maximumCallback: value.maximumCallbackNumber,
+            rollingMaximum: rollingMaximum,
+            longFrames: value.totalSlowCallbacks,
+            rollingSlowCallbacks: rollingSlowCallbacks,
+            totalCallbacks: value.totalCallbacks,
         };
     }
 
@@ -585,10 +634,49 @@
         }
         setStat("fps", formatNumber(snapshot.fps, 1));
         setStat("cpu", formatNumber(snapshot.cpuPercent, 1) + "%");
-        setStat("mean", formatNumber(snapshot.mean, 2) + " ms");
-        setStat("p95", formatNumber(snapshot.p95, 2) + " ms");
-        setStat("max", formatNumber(snapshot.maximum, 2) + " ms");
+        setStat("mean", formatDuration(snapshot.mean));
+        setStat("p95", formatDuration(snapshot.p95));
+        setStat("max", formatDuration(snapshot.maximum));
         setStat("long", String(snapshot.longFrames));
+    }
+
+    /**
+     * @param {{ maximum: number, maximumAt: number | null, maximumCallback: number | null, slowCallbacks: number, title: string }} jsPeak
+     * @param {{ maximum: number, maximumAt: number | null, maximumCallback: number | null, slowCallbacks: number, title: string }} candidatePeak
+     * @param {number} now
+     */
+    function renderPersistentPeaks(jsPeak, candidatePeak, now) {
+        for (var pair of [
+            ["js", jsPeak],
+            ["candidate", candidatePeak],
+        ]) {
+            var owner = /** @type {"js" | "candidate"} */ (pair[0]);
+            var peak = /** @type {typeof jsPeak} */ (pair[1]);
+            var value = document.querySelector('[data-sticky-peak="' + owner + '"]');
+            var detail = document.querySelector('[data-sticky-peak-detail="' + owner + '"]');
+            var formattedPeak = formatDuration(peak.maximum);
+            if (value && value.textContent !== formattedPeak) value.textContent = formattedPeak;
+            if (detail) {
+                var age =
+                    peak.maximumAt === null
+                        ? "waiting"
+                        : formatNumber((now - peak.maximumAt) / 1000, 1) + "s ago";
+                var formattedDetail =
+                    peak.maximumCallback === null
+                        ? "waiting for callbacks"
+                        : peak.title + " · #" + String(peak.maximumCallback) + " · " + age;
+                if (detail.textContent !== formattedDetail) detail.textContent = formattedDetail;
+                var tooltip =
+                    peak.title + " · " + String(peak.slowCallbacks) + " callbacks over 16.7 ms";
+                if (detail.getAttribute("title") !== tooltip) detail.setAttribute("title", tooltip);
+            }
+        }
+        var ratio = jsPeak.maximum > 0 ? candidatePeak.maximum / jsPeak.maximum : 0;
+        var ratioNode = document.querySelector("[data-sticky-peak-ratio]");
+        if (ratioNode) {
+            var formattedRatio = ratio > 0 ? formatNumber(ratio, 2) + "×" : "—";
+            if (ratioNode.textContent !== formattedRatio) ratioNode.textContent = formattedRatio;
+        }
     }
 
     /**
@@ -816,7 +904,7 @@
             note.textContent =
                 engine === "vir-full"
                     ? "Paired bars share one linear millisecond scale. Full VIR host time is nested inside execute; phases are not additive."
-                    : "Paired bars share one linear millisecond scale; independently timed phases are not stacked.";
+                    : "JS and the selection backend time the same renderer, with callback order balanced across examples. DOM differences reflect the rolling frame mix, segment replacements, and timer resolution; phases are not stacked.";
         }
     }
 
@@ -856,7 +944,7 @@
             note.textContent =
                 engine === "vir-full"
                     ? "One scale for this example. Full VIR host time is nested inside execute; phases are not additive."
-                    : "One scale for this example; paired bars are rolling means and phases are not stacked.";
+                    : "Same renderer on both sides; callback order is balanced across examples, while this rolling mean remains sensitive to segment replacements and timer resolution.";
         }
     }
 
@@ -957,10 +1045,10 @@
             '">' +
             '<span><strong data-stat="fps">0.0</strong><small>callback FPS</small></span>' +
             '<span><strong data-stat="cpu">0.0%</strong><small>main-thread CPU</small></span>' +
-            '<span><strong data-stat="mean">0.00 ms</strong><small>mean callback</small></span>' +
-            '<span><strong data-stat="p95">0.00 ms</strong><small>p95 callback</small></span>' +
-            '<span><strong data-stat="max">0.00 ms</strong><small>max callback</small></span>' +
-            '<span><strong data-stat="long">0</strong><small>&gt;16.7 ms</small></span>' +
+            '<span><strong data-stat="mean">—</strong><small>rolling mean</small></span>' +
+            '<span><strong data-stat="p95">—</strong><small>rolling p95</small></span>' +
+            '<span><strong data-stat="max">—</strong><small>run peak callback</small></span>' +
+            '<span><strong data-stat="long">0</strong><small>slow callbacks total</small></span>' +
             "</div>"
         );
     }
@@ -1245,6 +1333,7 @@
                 candidate: candidate,
                 jsOwner: jsOwner,
                 candidateOwner: candidateOwner,
+                candidateFirst: index % 2 === 1,
                 waitingSince: null,
                 loopSince: null,
                 finishedSince: null,
@@ -1260,6 +1349,15 @@
                       : "Lean · VIR selection";
             for (var label of document.querySelectorAll("[data-candidate-name]")) {
                 label.textContent = name;
+            }
+            var stickyName = document.querySelector("[data-sticky-candidate-name]");
+            if (stickyName) {
+                stickyName.textContent =
+                    currentBackend === "fir"
+                        ? "FIR"
+                        : currentBackend === "vir-full"
+                          ? "VIR full"
+                          : "VIR selection";
             }
             for (var dot of document.querySelectorAll("[data-candidate-dot]")) {
                 dot.classList.toggle("vir", currentBackend !== "fir");
@@ -1294,6 +1392,7 @@
             rows.forEach(function (row) {
                 withOwner(row.candidateOwner, row.candidate.dispose);
                 metrics.delete(row.candidateOwner);
+                registerMetrics(row.jsOwner, "js");
                 var article = dashboardGrid.querySelector(
                     '[data-example="' + String(row.index) + '"]',
                 );
@@ -1313,6 +1412,7 @@
                 row.waitingSince = null;
                 row.loopSince = null;
                 row.finishedSince = null;
+                row.candidateFirst = row.index % 2 === 1;
             });
             updateCandidatePresentation();
         }
@@ -1327,8 +1427,17 @@
 
         /** @param {ComparisonRow} row */
         function advanceRow(row) {
-            withOwner(row.jsOwner, row.legacy.advance);
-            withOwner(row.candidateOwner, row.candidate.advance);
+            // requestAnimationFrame preserves registration order closely enough that the
+            // second renderer can benefit from warm browser and JavaScript state. Balance
+            // that order across rows and reverse it whenever a row is scheduled again.
+            if (row.candidateFirst) {
+                withOwner(row.candidateOwner, row.candidate.advance);
+                withOwner(row.jsOwner, row.legacy.advance);
+            } else {
+                withOwner(row.jsOwner, row.legacy.advance);
+                withOwner(row.candidateOwner, row.candidate.advance);
+            }
+            row.candidateFirst = !row.candidateFirst;
         }
 
         /** @param {ComparisonRow} row */
@@ -1383,17 +1492,43 @@
                 seekRow(row, 0);
             });
         });
+        document.getElementById("comparison-clear-peaks")?.addEventListener("click", function () {
+            rows.forEach(function (row) {
+                var jsValue = metrics.get(row.jsOwner);
+                var candidateValue = metrics.get(row.candidateOwner);
+                if (jsValue) clearPersistentMetrics(jsValue);
+                if (candidateValue) clearPersistentMetrics(candidateValue);
+            });
+            refreshDashboard();
+        });
 
         function refreshDashboard() {
             var now = performance.now();
+            /** @type {{ js: DashboardEngineTotals, candidate: DashboardEngineTotals }} */
             var engineTotals = {
-                js: { fps: 0, cpu: 0, mean: 0, active: 0, phases: emptyPhaseAggregate() },
+                js: {
+                    fps: 0,
+                    cpu: 0,
+                    mean: 0,
+                    active: 0,
+                    phases: emptyPhaseAggregate(),
+                    maximum: 0,
+                    maximumAt: null,
+                    maximumCallback: null,
+                    slowCallbacks: 0,
+                    peakTitle: "—",
+                },
                 candidate: {
                     fps: 0,
                     cpu: 0,
                     mean: 0,
                     active: 0,
                     phases: emptyPhaseAggregate(),
+                    maximum: 0,
+                    maximumAt: null,
+                    maximumCallback: null,
+                    slowCallbacks: 0,
+                    peakTitle: "—",
                 },
             };
             rows.forEach(function (row) {
@@ -1457,6 +1592,13 @@
                     if (value.fps > 0) {
                         engineTotals[engine].mean += value.mean;
                         engineTotals[engine].active += 1;
+                    }
+                    engineTotals[engine].slowCallbacks += value.longFrames;
+                    if (value.maximum > engineTotals[engine].maximum) {
+                        engineTotals[engine].maximum = value.maximum;
+                        engineTotals[engine].maximumAt = value.maximumAt;
+                        engineTotals[engine].maximumCallback = value.maximumCallback;
+                        engineTotals[engine].peakTitle = examples[row.index].title;
                     }
                 }
                 var snapshot = row.legacy.snapshot();
@@ -1529,10 +1671,12 @@
                 if (summary) {
                     var summaryFps = summary.querySelector("[data-summary-stat=fps]");
                     var summaryCpu = summary.querySelector("[data-summary-stat=cpu]");
+                    var summaryPeak = summary.querySelector("[data-summary-stat=peak]");
                     if (summaryFps) summaryFps.textContent = formatNumber(fps, 1);
                     if (summaryCpu) {
                         summaryCpu.textContent = formatNumber(values.cpu, 1) + "%";
                     }
+                    if (summaryPeak) summaryPeak.textContent = formatDuration(values.maximum);
                 }
             }
             var jsMean =
@@ -1555,6 +1699,23 @@
                 renderOverheadRatio(aggregateOverhead, { mean: jsMean }, { mean: candidateMean });
             }
             renderAggregateCpu(engineTotals.js.cpu, engineTotals.candidate.cpu);
+            renderPersistentPeaks(
+                {
+                    maximum: engineTotals.js.maximum,
+                    maximumAt: engineTotals.js.maximumAt,
+                    maximumCallback: engineTotals.js.maximumCallback,
+                    slowCallbacks: engineTotals.js.slowCallbacks,
+                    title: engineTotals.js.peakTitle,
+                },
+                {
+                    maximum: engineTotals.candidate.maximum,
+                    maximumAt: engineTotals.candidate.maximumAt,
+                    maximumCallback: engineTotals.candidate.maximumCallback,
+                    slowCallbacks: engineTotals.candidate.slowCallbacks,
+                    title: engineTotals.candidate.peakTitle,
+                },
+                now,
+            );
             renderAggregatePhases(
                 averagePhaseAggregate(engineTotals.js.phases),
                 averagePhaseAggregate(engineTotals.candidate.phases),

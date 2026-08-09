@@ -935,6 +935,9 @@ def test_animation_comparison_dashboard(page):
     assert page.locator(".stage svg").count() == 32
     assert "16 examples · 32 owned players" in page.locator("#comparison-status").inner_text()
     assert page.locator("#comparison-backend").input_value() == "vir-selection"
+    assert page.locator(".sticky-peaks").count() == 1
+    assert page.locator(".sticky-peaks").evaluate("node => getComputedStyle(node).position") == "sticky"
+    assert page.locator("[data-sticky-candidate-name]").text_content() == "VIR selection"
     timing_label = page.locator('label:has(#comparison-vir-timing)').inner_text()
     assert "Detailed callback phases" in timing_label
     assert "adds measurement overhead" in timing_label
@@ -974,6 +977,18 @@ def test_animation_comparison_dashboard(page):
         .inner_text()
         .rstrip("×")
     ) > 0
+    page.wait_for_function(
+        """() => [...document.querySelectorAll('[data-sticky-peak]')]
+            .every(node => node.textContent !== '—')""",
+        timeout=10_000,
+    )
+    initial_peaks = page.locator("[data-sticky-peak]").all_inner_texts()
+    assert len(initial_peaks) == 2
+    assert all(value.endswith(("µs", "ms")) for value in initial_peaks)
+    assert page.locator('[data-summary-stat="peak"]').count() == 2
+    initial_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert all(row["callback"]["maximum"] > 0 for row in initial_snapshot["rows"])
+    assert all(row["callback"]["maximumCallback"] > 0 for row in initial_snapshot["rows"])
     page.evaluate("document.body.dataset.suppressPhaseCharts = 'true'")
     page.locator("#comparison-vir-timing").check()
     assert page.locator("#comparison-vir-timing").get_attribute("aria-expanded") == "false"
@@ -1097,7 +1112,12 @@ def test_animation_comparison_dashboard(page):
         assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
 
     page.click("#comparison-pause")
-    page.wait_for_timeout(350)
+    page.wait_for_timeout(2250)
+    persisted_peaks = page.locator("[data-sticky-peak]").all_inner_texts()
+    assert all(value != "—" for value in persisted_peaks)
+    paused_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert all(row["callback"]["maximum"] > 0 for row in paused_snapshot["rows"])
+    assert all(row["callback"]["rollingMaximum"] == 0 for row in paused_snapshot["rows"])
     assert all(
         state in ("paused", "finished")
         for state in page.locator("[data-row-state]").all_inner_texts()
@@ -1113,6 +1133,11 @@ def test_animation_comparison_dashboard(page):
     assert page.locator(".phase-metric:visible").count() == 0
     assert page.locator("[data-row-phase-comparison]:visible").count() == 0
     assert page.locator("[data-aggregate-phases]:visible").count() == 0
+    page.locator("#comparison-clear-peaks").click()
+    page.wait_for_timeout(300)
+    assert page.locator("[data-sticky-peak]").all_inner_texts() == ["—", "—"]
+    cleared_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert all(row["callback"]["maximum"] == 0 for row in cleared_snapshot["rows"])
     assert errors == []
 
 
