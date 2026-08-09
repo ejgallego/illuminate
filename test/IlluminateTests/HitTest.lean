@@ -10,6 +10,7 @@ public section
 
 
 open Illuminate
+open Lean
 
 /-!
 # Hit test tests
@@ -115,7 +116,7 @@ def testHitTest_gradientFill_outside : IO Unit := do
   let result := d.hitTest (Point.mk 20 20)
   assertTrue (!result.isHit) "gradient fill outside should miss"
 
-def testPreparedHitScene_matchesDiagram : IO Unit := do
+private def preparedHitBenchmarkDiagram : Diagram SVG :=
   let back : Diagram SVG := .tag 1 (Diagram.rect 24 20)
   let front : Diagram SVG :=
     .transform (Matrix.translate 6 0) <|
@@ -136,32 +137,93 @@ def testPreparedHitScene_matchesDiagram : IO Unit := do
   let styled : Diagram SVG :=
     .transform (Matrix.translate 15 14) <|
       Diagram.styledLines [[({ fontSize := 9 }, "styled")]]
+  let unlabeled : Diagram SVG :=
+    .transform (Matrix.translate 24 0) <| .tag 3 (Diagram.rect 4 4)
   let diagram := Diagram.compose
     (Diagram.compose (Diagram.compose back front) curve)
-    (Diagram.compose (Diagram.compose text image) styled)
-  let scene := diagram.prepareHitScene #[(1, "back"), (2, "front")]
+    (Diagram.compose (Diagram.compose text image) (Diagram.compose styled unlabeled))
+  Diagram.compose .empty diagram
+
+private def preparedHitBenchmarkLabels : Array (Nat × String) :=
+  #[(1, "back"), (2, "front")]
+
+private def preparedHitBenchmarkPoints : List (String × Point) :=
+  let specialPoints := [
+    ("origin", Point.mk 0 0),
+    ("front-center", Point.mk 6 0),
+    ("layer-boundary", Point.mk 12 0),
+    ("image-center", Point.mk (-12) 0),
+    ("text-center", Point.mk 0 14),
+    ("unlabeled-tag", Point.mk 24 0),
+    ("far-miss", Point.mk 40 40)
+  ]
+  let gridPoints := (List.range 17).flatMap fun x =>
+    (List.range 17).map fun y =>
+      (s!"grid-{x}-{y}", Point.mk ((x.toFloat - 8) * 3) ((y.toFloat - 8) * 3))
+  let negativeZero := Float.ofBits 9223372036854775808
+  let boundary := 12.0
+  let exactPoints := [
+    ("negative-zero-x", Point.mk negativeZero 0),
+    ("negative-zero-y", Point.mk 0 negativeZero),
+    ("boundary-predecessor", Point.mk (Float.ofBits (boundary.toBits - 1)) 0),
+    ("boundary-successor", Point.mk (Float.ofBits (boundary.toBits + 1)) 0),
+    ("fractional-negative", Point.mk (-7.25) 2.5)
+  ]
+  specialPoints ++ gridPoints ++ exactPoints
+
+private def clickToHitSceneResult (scene : HitScene) : Click → HitSceneResult
+  | .nothing => .nothing
+  | .something => .something
+  | .tag value => .tag value (scene.label? value |>.getD "")
+
+private def hitSceneResultToJson : HitSceneResult → Json
+  | .nothing => .mkObj [("kind", "nothing")]
+  | .something => .mkObj [("kind", "something")]
+  | .tag value label => .mkObj [
+      ("kind", "tag"),
+      ("value", toJson value),
+      ("label", label)]
+
+private def preparedHitBenchmarkFixture : String :=
+  let diagram := preparedHitBenchmarkDiagram
+  let scene := diagram.prepareHitScene preparedHitBenchmarkLabels
+  let queries := preparedHitBenchmarkPoints.toArray.map fun (name, point) =>
+    let expected := clickToHitSceneResult scene (diagram.hitTest point)
+    Json.mkObj [
+      ("name", name),
+      ("xBits", toString point.x.toBits),
+      ("yBits", toString point.y.toBits),
+      ("expected", hitSceneResultToJson expected)]
+  toString <| Json.mkObj [
+    ("schemaVersion", "illuminate.hit-scene-benchmark/v1"),
+    ("description", "Prepared mixed geometry with bit-exact semantic-oracle queries"),
+    ("encodedScene", scene.encode),
+    ("referenceQueryCount", toJson 296),
+    ("queryCount", toJson queries.size),
+    ("coverage", Json.arr <| #[
+      "empty", "transform", "clip", "tag", "unlabeledTag", "compose", "bounds",
+      "text", "styledText", "image", "line", "cubic", "arc", "fill", "stroke"].map Json.str),
+    ("queries", Json.arr queries)]
+
+def testPreparedHitScene_matchesDiagram : IO Unit := do
+  let diagram := preparedHitBenchmarkDiagram
+  let scene := diagram.prepareHitScene preparedHitBenchmarkLabels
   let decoded ← match HitScene.decode scene.encode with
     | .ok value => pure value
     | .error message => throw <| IO.userError s!"prepared hit scene failed to decode: {message}"
   assertTrue (decoded == scene) "prepared hit scene codec should round-trip"
-  let specialPoints := [
-    Point.mk 0 0,
-    Point.mk 6 0,
-    Point.mk 12 0,
-    Point.mk (-12) 0,
-    Point.mk 0 14,
-    Point.mk 40 40
-  ]
-  let gridPoints := (List.range 17).flatMap fun x =>
-    (List.range 17).map fun y =>
-      Point.mk ((x.toFloat - 8) * 3) ((y.toFloat - 8) * 3)
-  let points := specialPoints ++ gridPoints
-  for point in points do
+  for (_, point) in preparedHitBenchmarkPoints do
     let expected := diagram.hitTest point
     let actual := decoded.hitTest point
     assertTrue (actual == expected) s!"prepared hit scene mismatch at ({point.x}, {point.y})"
   assertTrue (scene.label? 2 == some "front") "prepared hit scene should retain labels"
   assertTrue (scene.query 6 0 == .tag 2 "front") "prepared query should return its tag label"
+
+def testPreparedHitScene_writeBenchmarkFixture : IO Unit := do
+  IO.FS.createDirAll "test_output"
+  let fixture := preparedHitBenchmarkFixture
+  IO.FS.writeFile "test_output/hit-scene-benchmark.json" fixture
+  IO.println s!"  → wrote test_output/hit-scene-benchmark.json ({fixture.length} bytes)"
 
 def hitTestTests : List (String × IO Unit) :=
   [ ("hitTest: filled rect interior", testHitTest_filledRect_interior)
@@ -179,4 +241,5 @@ def hitTestTests : List (String × IO Unit) :=
   , ("hitTest: gradient fill interior", testHitTest_gradientFill_interior)
   , ("hitTest: gradient fill outside", testHitTest_gradientFill_outside)
   , ("hitTest: prepared scene agrees", testPreparedHitScene_matchesDiagram)
+  , ("hitTest: write prepared benchmark fixture", testPreparedHitScene_writeBenchmarkFixture)
   ]

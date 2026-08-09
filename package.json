@@ -16,6 +16,7 @@
         "test:vir-selection-host": "node --no-warnings scripts/test-vir-selection-player.mjs",
         "test:fir-live-package": "node --no-warnings scripts/test-fir-live-package.mjs",
         "test:fir-hit-scene-package": "node --no-warnings scripts/test-fir-hit-scene-package.mjs",
+        "test:hit-scene-benchmark": "node --no-warnings scripts/test-hit-scene-benchmark.mjs",
         "test:player-traces": "node --no-warnings scripts/test-player-traces.mjs",
         "test:vir-traces": "npm run test:player-traces"
     },
