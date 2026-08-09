@@ -27,6 +27,15 @@
  *   scratchBytes: number
  * }} RuntimePhaseSample
  * @typedef {{ totalMs: number, projectMs: number, encodeMs: number, persistentBytes: number }} CreationSample
+ * @typedef {{
+ *   samples: number,
+ *   marshalMs: number,
+ *   executeMs: number,
+ *   decodeMs: number,
+ *   rewindMs: number,
+ *   hostMs: number,
+ *   adapterMs: number
+ * }} PhaseAggregate
  * @typedef {(timings: RuntimeCallTimings) => void} JsSelectionObserver
  * @typedef {{
  *   owner: string,
@@ -577,8 +586,8 @@
 
     /**
      * @param {HTMLElement} target
-     * @param {ReturnType<typeof metricSnapshot>} reference
-     * @param {ReturnType<typeof metricSnapshot>} candidate
+     * @param {{ mean: number }} reference
+     * @param {{ mean: number }} candidate
      */
     function renderOverheadRatio(target, reference, candidate) {
         var ratio = reference.mean > 0 ? candidate.mean / reference.mean : 0;
@@ -591,7 +600,7 @@
             if (detail) detail.textContent = "waiting for paired callbacks";
             if (fill) fill.style.width = "0%";
             target.dataset.overheadState = "waiting";
-            target.dataset.overheadRatio = "";
+            target.dataset.overheadValue = "";
             return;
         }
         if (value) value.textContent = formatNumber(ratio, 2) + "× JS";
@@ -603,7 +612,130 @@
         }
         if (fill) fill.style.width = formatNumber(Math.min(ratio, 10) * 10, 1) + "%";
         target.dataset.overheadState = ratio <= 1 ? "faster" : "slower";
-        target.dataset.overheadRatio = String(ratio);
+        target.dataset.overheadValue = String(ratio);
+    }
+
+    /** @returns {PhaseAggregate} */
+    function emptyPhaseAggregate() {
+        return {
+            samples: 0,
+            marshalMs: 0,
+            executeMs: 0,
+            decodeMs: 0,
+            rewindMs: 0,
+            hostMs: 0,
+            adapterMs: 0,
+        };
+    }
+
+    /** @param {PhaseAggregate} aggregate @param {ReturnType<typeof phaseSnapshot>} snapshot */
+    function addPhaseAggregate(aggregate, snapshot) {
+        if (snapshot.samples === 0) return;
+        aggregate.samples += 1;
+        aggregate.marshalMs += snapshot.marshalMs;
+        aggregate.executeMs += snapshot.executeMs;
+        aggregate.decodeMs += snapshot.decodeMs;
+        aggregate.rewindMs += snapshot.rewindMs;
+        aggregate.hostMs += snapshot.hostMs;
+        aggregate.adapterMs += snapshot.adapterMs;
+    }
+
+    /** @param {PhaseAggregate} aggregate @returns {PhaseAggregate} */
+    function averagePhaseAggregate(aggregate) {
+        var divisor = aggregate.samples === 0 ? 1 : aggregate.samples;
+        return {
+            samples: aggregate.samples,
+            marshalMs: aggregate.marshalMs / divisor,
+            executeMs: aggregate.executeMs / divisor,
+            decodeMs: aggregate.decodeMs / divisor,
+            rewindMs: aggregate.rewindMs / divisor,
+            hostMs: aggregate.hostMs / divisor,
+            adapterMs: aggregate.adapterMs / divisor,
+        };
+    }
+
+    /** @param {number} jsCpu @param {number} candidateCpu */
+    function renderAggregateCpu(jsCpu, candidateCpu) {
+        var scale = Math.max(jsCpu, candidateCpu, 0.001);
+        for (var pair of [
+            ["js", jsCpu],
+            ["candidate", candidateCpu],
+        ]) {
+            var owner = String(pair[0]);
+            var value = Number(pair[1]);
+            var output = document.querySelector('[data-aggregate-cpu-value="' + owner + '"]');
+            var fill = /** @type {HTMLElement | null} */ (
+                document.querySelector('[data-aggregate-cpu-fill="' + owner + '"]')
+            );
+            if (output) output.textContent = formatNumber(value, 1) + "%";
+            if (fill) fill.style.width = formatNumber((value / scale) * 100, 1) + "%";
+        }
+    }
+
+    /**
+     * @param {PhaseAggregate} jsPhases
+     * @param {PhaseAggregate} candidatePhases
+     * @param {boolean} enabled
+     * @param {"vir-selection" | "vir-full" | "fir"} engine
+     */
+    function renderAggregatePhases(jsPhases, candidatePhases, enabled, engine) {
+        var target = /** @type {HTMLElement | null} */ (
+            document.querySelector("[data-aggregate-phases]")
+        );
+        if (!target) return;
+        target.hidden = !enabled;
+        if (!enabled) return;
+        var definitions = [
+            ["marshal", "marshalMs", "input boundary"],
+            ["execute", "executeMs", "execute"],
+            ["decode", "decodeMs", "decode"],
+            ["rewind", "rewindMs", "rewind"],
+            ["host", "hostMs", engine === "vir-full" ? "host (nested)" : "DOM apply"],
+            ["adapter", "adapterMs", "outer gap"],
+        ];
+        var scale = 0;
+        for (var definition of definitions) {
+            var field =
+                /** @type {"marshalMs" | "executeMs" | "decodeMs" | "rewindMs" | "hostMs" | "adapterMs"} */ (
+                    definition[1]
+                );
+            scale = Math.max(scale, jsPhases[field], candidatePhases[field]);
+        }
+        scale = Math.max(scale, 0.000001);
+        for (var definition of definitions) {
+            var key = String(definition[0]);
+            var field =
+                /** @type {"marshalMs" | "executeMs" | "decodeMs" | "rewindMs" | "hostMs" | "adapterMs"} */ (
+                    definition[1]
+                );
+            var group = document.querySelector('[data-aggregate-phase-group="' + key + '"]');
+            if (!(group instanceof HTMLElement)) continue;
+            var label = group.querySelector("[data-aggregate-phase-label]");
+            if (label) label.textContent = String(definition[2]);
+            for (var pair of [
+                ["js", jsPhases[field]],
+                ["candidate", candidatePhases[field]],
+            ]) {
+                var owner = String(pair[0]);
+                var value = Number(pair[1]);
+                var output = group.querySelector('[data-aggregate-phase-value="' + owner + '"]');
+                var fill = /** @type {HTMLElement | null} */ (
+                    group.querySelector('[data-aggregate-phase-fill="' + owner + '"]')
+                );
+                if (output) output.textContent = formatNumber(value, 3);
+                if (fill) {
+                    fill.style.height =
+                        value <= 0 ? "0" : formatNumber((value / scale) * 94, 1) + "px";
+                }
+            }
+        }
+        var note = target.querySelector("[data-aggregate-phase-note]");
+        if (note) {
+            note.textContent =
+                engine === "vir-full"
+                    ? "Paired bars share one linear millisecond scale. Full VIR host time is nested inside execute; phases are not additive."
+                    : "Paired bars share one linear millisecond scale; independently timed phases are not stacked.";
+        }
     }
 
     /**
@@ -714,7 +846,7 @@
     /** @param {"js" | "candidate"} owner */
     function phaseMarkup(owner) {
         return (
-            '<div class="phase-metric" data-' +
+            '<div class="phase-metric" hidden data-' +
             owner +
             "-phases>" +
             "<header><strong data-phase-title>VIR retained callback</strong><span><small data-phase-count>0 retained callbacks</small><small data-phase-setup>shared runtime</small></span></header>" +
@@ -834,6 +966,14 @@
             runtime.setCallbackTimingObserver(
                 virTiming.checked && currentBackend === "vir-full" ? recordVirCallbackTiming : null,
             );
+            virTiming.setAttribute("aria-expanded", String(virTiming.checked));
+            for (var panel of document.querySelectorAll(".phase-metric")) {
+                if (panel instanceof HTMLElement) panel.hidden = !virTiming.checked;
+            }
+            var aggregatePhases = /** @type {HTMLElement | null} */ (
+                document.querySelector("[data-aggregate-phases]")
+            );
+            if (aggregatePhases) aggregatePhases.hidden = !virTiming.checked;
         }
         virTiming.addEventListener("change", updateVirTiming);
 
@@ -971,6 +1111,11 @@
             var summaryDot = summary?.querySelector(".engine-dot");
             summaryDot?.classList.toggle("vir", currentBackend !== "fir");
             summaryDot?.classList.toggle("fir", currentBackend === "fir");
+            for (var candidateVisual of document.querySelectorAll(
+                '[data-aggregate-cpu-fill="candidate"], [data-aggregate-candidate-legend], [data-aggregate-phase-candidate-column]',
+            )) {
+                candidateVisual.classList.toggle("fir", currentBackend === "fir");
+            }
         }
 
         /** @param {"vir-selection" | "vir-full" | "fir"} backend */
@@ -1082,8 +1227,14 @@
         function refreshDashboard() {
             var now = performance.now();
             var engineTotals = {
-                js: { fps: 0, cpu: 0, mean: 0, active: 0 },
-                candidate: { fps: 0, cpu: 0, mean: 0, active: 0 },
+                js: { fps: 0, cpu: 0, mean: 0, active: 0, phases: emptyPhaseAggregate() },
+                candidate: {
+                    fps: 0,
+                    cpu: 0,
+                    mean: 0,
+                    active: 0,
+                    phases: emptyPhaseAggregate(),
+                },
             };
             rows.forEach(function (row) {
                 var article = dashboardGrid.querySelector(
@@ -1097,6 +1248,8 @@
                 var candidateMetric = metricSnapshot(candidateValue, now);
                 var jsPhases = phaseSnapshot(jsValue, jsMetric.mean, now);
                 var candidatePhases = phaseSnapshot(candidateValue, candidateMetric.mean, now);
+                addPhaseAggregate(engineTotals.js.phases, jsPhases);
+                addPhaseAggregate(engineTotals.candidate.phases, candidatePhases);
                 renderMetric(
                     /** @type {HTMLElement} */ (article.querySelector('[data-engine="js"]')),
                     jsMetric,
@@ -1224,6 +1377,19 @@
                 summaryRatio.textContent =
                     jsMean > 0 ? formatNumber(candidateMean / jsMean, 2) + "×" : "—";
             }
+            var aggregateOverhead = /** @type {HTMLElement | null} */ (
+                document.querySelector("[data-aggregate-overhead]")
+            );
+            if (aggregateOverhead) {
+                renderOverheadRatio(aggregateOverhead, { mean: jsMean }, { mean: candidateMean });
+            }
+            renderAggregateCpu(engineTotals.js.cpu, engineTotals.candidate.cpu);
+            renderAggregatePhases(
+                averagePhaseAggregate(engineTotals.js.phases),
+                averagePhaseAggregate(engineTotals.candidate.phases),
+                virTiming.checked,
+                currentBackend,
+            );
         }
 
         window.__illuminateComparisonSnapshot = function () {

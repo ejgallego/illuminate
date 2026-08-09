@@ -935,6 +935,11 @@ def test_animation_comparison_dashboard(page):
     assert page.locator(".stage svg").count() == 32
     assert "16 examples · 32 owned players" in page.locator("#comparison-status").inner_text()
     assert page.locator("#comparison-backend").input_value() == "vir-selection"
+    timing_label = page.locator('label:has(#comparison-vir-timing)').inner_text()
+    assert "Detailed callback phases" in timing_label
+    assert "adds measurement overhead" in timing_label
+    assert page.locator(".phase-metric:visible").count() == 0
+    assert page.locator("[data-aggregate-phases]:visible").count() == 0
     fir_live_staged = (ROOT / "test_output" / "fir-live" / "BUILD.json").exists()
     assert page.locator('#comparison-backend option[value="fir"]').evaluate(
         "option => option.disabled"
@@ -954,11 +959,24 @@ def test_animation_comparison_dashboard(page):
     )
     assert page.locator("[data-overhead-ratio]").count() == 16
     assert float(
+        page.locator("[data-aggregate-overhead] [data-overhead-value]")
+        .inner_text()
+        .split("×")[0]
+    ) > 0
+    assert page.locator("[data-aggregate-cpu-fill]").count() == 2
+    assert page.evaluate(
+        """() => [...document.querySelectorAll('[data-aggregate-cpu-fill]')]
+            .every(node => Number.parseFloat(node.style.width || '0') > 0)"""
+    )
+    assert float(
         page.locator('[data-summary="candidate"] [data-summary-stat="ratio"]')
         .inner_text()
         .rstrip("×")
     ) > 0
     page.locator("#comparison-vir-timing").check()
+    assert page.locator("#comparison-vir-timing").get_attribute("aria-expanded") == "true"
+    assert page.locator(".phase-metric:visible").count() == 32
+    assert page.locator("[data-aggregate-phases]:visible").count() == 1
     page.wait_for_function(
         """() => [...document.querySelectorAll('[data-phase-count]')]
             .every(node => Number.parseInt(node.textContent || '0', 10) > 0)""",
@@ -967,6 +985,22 @@ def test_animation_comparison_dashboard(page):
     phase_values = page.locator("[data-phase]").all_inner_texts()
     assert len(phase_values) == 16 * 2 * 8
     assert all(float(value.split()[0]) >= 0 for value in phase_values)
+    assert page.locator("[data-aggregate-phase-group]").count() == 6
+    assert page.locator(".aggregate-phase-column").count() == 12
+    assert page.evaluate(
+        """() => [...document.querySelectorAll('[data-aggregate-phase-group]')]
+            .every(group => group.querySelectorAll('[data-aggregate-phase-value]').length === 2)"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-aggregate-phase-group="execute"] [data-aggregate-phase-value]'
+          )].every(node => Number.parseFloat(node.textContent || '0') > 0)"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-aggregate-phase-group="execute"] [data-aggregate-phase-fill]'
+          )].every(node => Number.parseFloat(node.style.height || '0') > 0)"""
+    )
     assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
     assert page.evaluate(
         """() => [...document.querySelectorAll(
@@ -1026,6 +1060,10 @@ def test_animation_comparison_dashboard(page):
         value.startswith("0 / ") for value in page.locator("[data-frame]").all_inner_texts()
     )
     assert page.locator("[data-dom-match].mismatch").count() == 0
+    page.locator("#comparison-vir-timing").uncheck()
+    assert page.locator("#comparison-vir-timing").get_attribute("aria-expanded") == "false"
+    assert page.locator(".phase-metric:visible").count() == 0
+    assert page.locator("[data-aggregate-phases]:visible").count() == 0
     assert errors == []
 
 

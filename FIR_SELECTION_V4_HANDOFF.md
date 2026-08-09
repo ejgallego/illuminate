@@ -181,3 +181,56 @@ Return the immutable package path, FIR functional commit,
 complete/base Wasm hashes and sizes, exact imports/exports, adapter
 constants, source hashes, ownership measurements, phase measurements,
 and all acceptance results.
+
+## Wasm-generation follow-up: hot-event marshaling
+
+The accepted v4 adapter makes the steady-state call as
+`dispatch(player, { kind: "tick", timestamp })`. The animation graph
+is retained, so the input cost below is only construction and encoding
+of that one tagged event; it is not SVG, patch-table, or
+animation-data transfer.
+
+Two independent Illuminate measurements put that cost in perspective:
+
+| Harness                           | Whole FIR callback | Event encode | Wasm execute | Result decode |     Rewind | Shared DOM |
+| --------------------------------- | -----------------: | -----------: | -----------: | ------------: | ---------: | ---------: |
+| Node, pause workload              |           0.010 ms |     0.001 ms |     0.003 ms |      0.004 ms |  <0.001 ms |        n/a |
+| Node, morph workload              |           0.009 ms |     0.001 ms |     0.003 ms |      0.004 ms |  <0.001 ms |        n/a |
+| Chromium, 16-example balanced run |         0.04814 ms |   0.00477 ms |   0.01073 ms |    0.01196 ms | 0.00070 ms | 0.00780 ms |
+
+The Node figures are means from 12 fresh player-creation rounds and
+1,200 dispatches after 60 warmups. The browser figure is the aggregate
+mean from three fresh-context, 3,000 ms balanced-order runs with 16/16
+DOM matches. Its paired JavaScript callback was 0.02976 ms, so FIR was
+1.62× JS and the absolute gap was 0.01838 ms. Event encoding was 9.9%
+of the whole FIR callback, 44% of Wasm execution time, and 26% of that
+FIR-to-JS gap. Result decoding was a larger single boundary phase, so
+event encoding is an important target but not the only boundary
+target.
+
+The most useful next wasm-generation experiment is a
+constructor-specific hot path such as
+`dispatchTick(player, timestamp)`. It should construct
+`PlayerEvent.tick timestamp` inside Wasm and call the same
+`transitionSelectionLive`; the generic `dispatch` remains the semantic
+oracle and handles the five less frequent event constructors. This
+isolates the cost of generic JavaScript tagged-object/Lean-inductive
+lowering without changing Illuminate semantics or adding scalar casts.
+The timestamp must remain a bit-exact binary64 `Float`.
+
+Compare the generic and scalar paths in the same adapter and report
+event encode, execute, decode, rewind, whole callback, and scratch
+bytes. If the scalar entry removes most of the encode phase, the
+reusable FIR improvement is constructor-specific adapter exports,
+reusable event slots, or cheaper generic inductive lowering. If it
+does not, split the existing `encodeMs` label further because it also
+contains adapter bookkeeping.
+
+This experiment belongs in FIR's wasm-generation adapter/compiler
+lane; Illuminate should supply the workload, differential oracle, and
+browser measurements. A regenerated package must use the corrected
+`Player.lean` hash
+`e1f98f9d02118f4b61a3f935dbdf49b1c3caf7c0b52aa0f80b7232fb740cd620` and
+pass all 107 differential traces. In particular, do not optimize the
+currently staged v4 Wasm in place: it predates the duplicate
+frame-zero initialization fix.

@@ -280,12 +280,46 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .auto.cycle \{ margin-right: auto; }
 .auto input \{ accent-color: #6c91eb; }
 .auto select \{ padding: 5px 7px; border: 1px solid #344362; border-radius: 6px; background: #172039; color: #c6d0e7; }
+.profiling-toggle span \{ color: #8292b3; font-size: 11px; }
 #comparison-status \{ color: #8ea2c7; font-size: 12px; }
 .summaries \{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; width: min(100% - 36px, 1320px); margin: 24px auto; }
 .summary \{ display: flex; gap: 22px; align-items: center; min-height: 90px; padding: 18px 22px; background: #121a30; border: 1px solid #2a395f; border-radius: 14px; box-shadow: 0 14px 40px rgb(0 0 0 / .18); }
 .summary h2 \{ margin: 0 auto 0 0; font-size: 15px; }
 .summary strong \{ display: block; font-size: 24px; font-variant-numeric: tabular-nums; }
 .summary small \{ display: block; color: #8292b3; font-size: 10px; text-transform: uppercase; }
+.aggregate-insights \{ grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); gap: 20px; padding: 18px 22px; background: #121a30; border: 1px solid #2a395f; border-radius: 14px; box-shadow: 0 14px 40px rgb(0 0 0 / .18); }
+.aggregate-insights h2 \{ margin: 0 0 3px; font-size: 13px; }
+.aggregate-insights p \{ margin: 0; color: #8292b3; font-size: 10px; line-height: 1.45; }
+.aggregate-overhead \{ margin: 10px 0 0; }
+.aggregate-overhead .overhead-ratio \{ margin-top: 0; }
+.aggregate-cpu \{ display: grid; gap: 8px; align-content: center; }
+.aggregate-cpu-row \{ display: grid; grid-template-columns: 88px minmax(90px, 1fr) 54px; gap: 9px; align-items: center; }
+.aggregate-cpu-row span:first-child \{ overflow: hidden; color: #aebbd9; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.aggregate-cpu-row output \{ color: #dce5ff; font: 700 11px ui-monospace, monospace; text-align: right; }
+.aggregate-cpu-track \{ height: 7px; overflow: hidden; background: #0d1426; border-radius: 999px; }
+.aggregate-cpu-track i \{ display: block; width: 0; height: 100%; border-radius: inherit; transition: width .2s ease; }
+.aggregate-cpu-track .js \{ background: #f4cc55; }
+.aggregate-cpu-track .candidate \{ background: #668fff; }
+.aggregate-cpu-track .candidate.fir \{ background: #5bd6aa; }
+.aggregate-phases \{ grid-column: 1 / -1; padding-top: 16px; border-top: 1px solid #263453; }
+.aggregate-phases[hidden], .phase-metric[hidden] \{ display: none; }
+.aggregate-phase-head \{ display: flex; gap: 14px; align-items: end; justify-content: space-between; }
+.aggregate-phase-legend \{ display: flex; gap: 12px; color: #98a8c8; font-size: 9px; }
+.aggregate-phase-legend span \{ display: inline-flex; gap: 5px; align-items: center; }
+.aggregate-phase-legend i \{ width: 7px; height: 7px; border-radius: 2px; }
+.aggregate-phase-legend .js \{ background: #f4cc55; }
+.aggregate-phase-legend .candidate \{ background: #668fff; }
+.aggregate-phase-legend .candidate.fir \{ background: #5bd6aa; }
+.aggregate-phase-chart \{ display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+.aggregate-phase-group \{ display: grid; grid-template-rows: 128px auto; gap: 7px; min-width: 0; }
+.aggregate-phase-bars \{ display: flex; gap: 6px; align-items: end; justify-content: center; padding: 0 5px 1px; border-bottom: 1px solid #344362; }
+.aggregate-phase-column \{ display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: end; width: min(38%, 42px); height: 100%; }
+.aggregate-phase-column output \{ color: #b7c3dc; font: 8px ui-monospace, monospace; white-space: nowrap; }
+.aggregate-phase-column i \{ display: block; width: 100%; height: 0; min-height: 1px; border-radius: 4px 4px 1px 1px; transition: height .2s ease; }
+.aggregate-phase-column.js i \{ background: #f4cc55; }
+.aggregate-phase-column.candidate i \{ background: #668fff; }
+.aggregate-phase-column.candidate.fir i \{ background: #5bd6aa; }
+.aggregate-phase-label \{ overflow: hidden; color: #aebbd9; font-size: 9px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 #comparison-grid \{ display: grid; gap: 20px; width: min(100% - 36px, 1320px); margin: 0 auto 64px; }
 .example \{ overflow: hidden; background: #11192d; border: 1px solid #28375a; border-radius: 16px; box-shadow: 0 16px 52px rgb(0 0 0 / .2); }
 .example > header \{ display: flex; gap: 16px; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #263453; }
@@ -332,7 +366,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .example footer input \{ width: 100%; accent-color: #6c91eb; }
 .example output \{ min-width: 74px; color: #8495b6; font: 11px ui-monospace, monospace; text-align: right; }
 .method \{ width: min(100% - 36px, 1320px); margin: -42px auto 60px; color: #7889aa; font-size: 11px; line-height: 1.6; }
-@media (max-width: 780px) \{ .pair, .summaries \{ grid-template-columns: 1fr; } .player + .player \{ border-top: 1px solid #263453; border-left: 0; } .example > footer \{ grid-template-columns: 1fr 1fr; } .example footer input \{ grid-column: 1 / -1; } .example output \{ display: none; } .summary \{ min-height: 74px; } }
+@media (max-width: 780px) \{ .pair, .summaries, .aggregate-insights \{ grid-template-columns: 1fr; } .aggregate-phase-chart \{ grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 18px; } .player + .player \{ border-top: 1px solid #263453; border-left: 0; } .example > footer \{ grid-template-columns: 1fr 1fr; } .example footer input \{ grid-column: 1 / -1; } .example output \{ display: none; } .summary \{ min-height: 74px; } }
 </style>
 </head>
 <body data-ready=\"false\">
@@ -347,12 +381,27 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
   <button id=\"comparison-reset\" class=\"quiet\" type=\"button\">Reset all</button>
   <label class=\"auto cycle\"><input id=\"comparison-auto-cycle\" type=\"checkbox\" checked> Auto-cycle pauses and completed animations</label>
   <label class=\"auto\">Candidate backend <select id=\"comparison-backend\"><option value=\"vir-selection\">Lean · VIR selection</option><option value=\"vir-full\">Lean · VIR full</option><option value=\"fir\" disabled>Lean · FIR selection — persistent package required</option></select></label>
-  <label class=\"auto\"><input id=\"comparison-vir-timing\" type=\"checkbox\"> Runtime phase timing</label>
+  <label class=\"auto profiling-toggle\"><input id=\"comparison-vir-timing\" type=\"checkbox\" aria-controls=\"comparison-grid aggregate-phases\" aria-expanded=\"false\"> Detailed callback phases <span>adds measurement overhead</span></label>
   <span id=\"comparison-status\" data-state=\"loading\">Loading one shared VIR runtime…</span>
 </nav>
 <section class=\"summaries\" aria-label=\"Aggregate statistics\">
   <article class=\"summary\" data-summary=\"js\"><span class=\"engine-dot js\"></span><h2>JavaScript aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span></article>
   <article class=\"summary\" data-summary=\"candidate\"><span class=\"engine-dot vir\"></span><h2>Lean · VIR selection aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span><span><strong data-summary-stat=\"ratio\">—</strong><small>callback / paired JS</small></span></article>
+  <article class=\"aggregate-insights\">
+    <section><h2>Aggregate callback overhead</h2><p>Whole candidate callback against the paired JavaScript callback; the gold marker is 1×.</p><div class=\"aggregate-overhead\" data-aggregate-overhead data-overhead-state=\"waiting\"><div class=\"overhead-ratio\"><div><strong data-overhead-value>—</strong><small>candidate / paired JavaScript</small></div><output data-overhead-detail>waiting for paired callbacks</output><span class=\"overhead-track\"><i data-overhead-fill></i><b title=\"JavaScript baseline\"></b></span></div></div></section>
+    <section class=\"aggregate-cpu\"><h2>Rolling one-core share</h2><p>Paired bars use the larger current share as their visual scale.</p><div class=\"aggregate-cpu-row\"><span>JavaScript</span><span class=\"aggregate-cpu-track\"><i class=\"js\" data-aggregate-cpu-fill=\"js\"></i></span><output data-aggregate-cpu-value=\"js\">0.0%</output></div><div class=\"aggregate-cpu-row\"><span data-aggregate-candidate-name>VIR selection</span><span class=\"aggregate-cpu-track\"><i class=\"candidate\" data-aggregate-cpu-fill=\"candidate\"></i></span><output data-aggregate-cpu-value=\"candidate\">0.0%</output></div></section>
+    <section class=\"aggregate-phases\" id=\"aggregate-phases\" data-aggregate-phases hidden>
+      <div class=\"aggregate-phase-head\"><div><h2>Aggregate detailed runtime analyzer</h2><p data-aggregate-phase-note>Paired bars share one linear millisecond scale; independently timed phases are not stacked.</p></div><div class=\"aggregate-phase-legend\"><span><i class=\"js\"></i>JavaScript</span><span><i class=\"candidate\" data-aggregate-candidate-legend></i><span data-aggregate-candidate-name>VIR selection</span></span></div></div>
+      <div class=\"aggregate-phase-chart\">
+        <div class=\"aggregate-phase-group\" data-aggregate-phase-group=\"marshal\"><div class=\"aggregate-phase-bars\"><span class=\"aggregate-phase-column js\"><output data-aggregate-phase-value=\"js\">0.000</output><i data-aggregate-phase-fill=\"js\"></i></span><span class=\"aggregate-phase-column candidate\" data-aggregate-phase-candidate-column><output data-aggregate-phase-value=\"candidate\">0.000</output><i data-aggregate-phase-fill=\"candidate\"></i></span></div><span class=\"aggregate-phase-label\" data-aggregate-phase-label>input</span></div>
+        <div class=\"aggregate-phase-group\" data-aggregate-phase-group=\"execute\"><div class=\"aggregate-phase-bars\"><span class=\"aggregate-phase-column js\"><output data-aggregate-phase-value=\"js\">0.000</output><i data-aggregate-phase-fill=\"js\"></i></span><span class=\"aggregate-phase-column candidate\" data-aggregate-phase-candidate-column><output data-aggregate-phase-value=\"candidate\">0.000</output><i data-aggregate-phase-fill=\"candidate\"></i></span></div><span class=\"aggregate-phase-label\" data-aggregate-phase-label>execute</span></div>
+        <div class=\"aggregate-phase-group\" data-aggregate-phase-group=\"decode\"><div class=\"aggregate-phase-bars\"><span class=\"aggregate-phase-column js\"><output data-aggregate-phase-value=\"js\">0.000</output><i data-aggregate-phase-fill=\"js\"></i></span><span class=\"aggregate-phase-column candidate\" data-aggregate-phase-candidate-column><output data-aggregate-phase-value=\"candidate\">0.000</output><i data-aggregate-phase-fill=\"candidate\"></i></span></div><span class=\"aggregate-phase-label\" data-aggregate-phase-label>decode</span></div>
+        <div class=\"aggregate-phase-group\" data-aggregate-phase-group=\"rewind\"><div class=\"aggregate-phase-bars\"><span class=\"aggregate-phase-column js\"><output data-aggregate-phase-value=\"js\">0.000</output><i data-aggregate-phase-fill=\"js\"></i></span><span class=\"aggregate-phase-column candidate\" data-aggregate-phase-candidate-column><output data-aggregate-phase-value=\"candidate\">0.000</output><i data-aggregate-phase-fill=\"candidate\"></i></span></div><span class=\"aggregate-phase-label\" data-aggregate-phase-label>rewind</span></div>
+        <div class=\"aggregate-phase-group\" data-aggregate-phase-group=\"host\"><div class=\"aggregate-phase-bars\"><span class=\"aggregate-phase-column js\"><output data-aggregate-phase-value=\"js\">0.000</output><i data-aggregate-phase-fill=\"js\"></i></span><span class=\"aggregate-phase-column candidate\" data-aggregate-phase-candidate-column><output data-aggregate-phase-value=\"candidate\">0.000</output><i data-aggregate-phase-fill=\"candidate\"></i></span></div><span class=\"aggregate-phase-label\" data-aggregate-phase-label>DOM apply</span></div>
+        <div class=\"aggregate-phase-group\" data-aggregate-phase-group=\"adapter\"><div class=\"aggregate-phase-bars\"><span class=\"aggregate-phase-column js\"><output data-aggregate-phase-value=\"js\">0.000</output><i data-aggregate-phase-fill=\"js\"></i></span><span class=\"aggregate-phase-column candidate\" data-aggregate-phase-candidate-column><output data-aggregate-phase-value=\"candidate\">0.000</output><i data-aggregate-phase-fill=\"candidate\"></i></span></div><span class=\"aggregate-phase-label\" data-aggregate-phase-label>outer gap</span></div>
+      </div>
+    </section>
+  </article>
 </section>
 <main id=\"comparison-grid\"></main>
 <p class=\"method\">Rolling two-second window. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Each overhead badge divides candidate mean callback time by the JavaScript player beside it; its gold marker is 1× and its bar is capped at 10×. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
