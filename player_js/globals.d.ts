@@ -56,6 +56,28 @@ declare function createFirLivePlayerHost(
     seek(frame: number): void;
     dispose(): void;
 };
+declare function createVirSelectionPlayerHost(
+    runtime: {
+        call(name: string, ...args: unknown[]): unknown;
+        callTimed(
+            name: string,
+            ...args: unknown[]
+        ): { value: unknown; timings: Record<string, number> };
+    },
+    animation: AnimData,
+    renderer: FirComparisonRenderer,
+    scheduler?: {
+        request(callback: FrameRequestCallback): number;
+        cancel(handle: number): void;
+    },
+    observer?: ((observation: any) => void) | null,
+    observeDispatch?: (() => boolean) | null,
+): {
+    advance(): void;
+    pause(): void;
+    seek(frame: number): void;
+    dispose(): void;
+};
 
 interface Window {
     __illuminateComparisonSnapshot?: () => unknown;

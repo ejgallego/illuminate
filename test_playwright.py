@@ -934,7 +934,7 @@ def test_animation_comparison_dashboard(page):
     assert page.locator(".example").count() == 16
     assert page.locator(".stage svg").count() == 32
     assert "16 examples · 32 owned players" in page.locator("#comparison-status").inner_text()
-    assert page.locator("#comparison-backend").input_value() == "vir"
+    assert page.locator("#comparison-backend").input_value() == "vir-selection"
     fir_live_staged = (ROOT / "test_output" / "fir-live" / "BUILD.json").exists()
     assert page.locator('#comparison-backend option[value="fir"]').evaluate(
         "option => option.disabled"
@@ -956,6 +956,24 @@ def test_animation_comparison_dashboard(page):
     phase_values = page.locator("[data-phase]").all_inner_texts()
     assert len(phase_values) == 16 * 2 * 8
     assert all(float(value.split()[0]) >= 0 for value in phase_values)
+    assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-candidate-phases] [data-phase-setup]'
+          )].every(node => node.textContent?.startsWith('create '))"""
+    )
+
+    page.locator("#comparison-backend").select_option("vir-full")
+    page.wait_for_function(
+        """() => [...document.querySelectorAll('[data-candidate-name]')]
+            .every(node => node.textContent === 'Lean · VIR full')"""
+    )
+    page.click("#comparison-start")
+    page.wait_for_function(
+        """() => [...document.querySelectorAll('[data-candidate-phases] [data-phase-count]')]
+            .every(node => Number.parseInt(node.textContent || '0', 10) > 0)""",
+        timeout=10_000,
+    )
     assert page.evaluate(
         """() => [...document.querySelectorAll('[data-candidate-phases]')].every(panel =>
             Number.parseFloat(panel.querySelector('[data-phase=host]')?.textContent || '0') <=
@@ -967,7 +985,7 @@ def test_animation_comparison_dashboard(page):
         page.locator("#comparison-backend").select_option("fir")
         page.wait_for_function(
             """() => [...document.querySelectorAll('[data-candidate-name]')]
-                .every(node => node.textContent === 'Lean · FIR')"""
+                .every(node => node.textContent === 'Lean · FIR selection')"""
         )
         page.click("#comparison-start")
         page.wait_for_function(

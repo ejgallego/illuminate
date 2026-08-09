@@ -3,7 +3,7 @@ Copyright (c) 2026 Lean FRO LLC. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Author: Emilio J. Gallego Arias
 -/
-import Illuminate.Animation.Player
+import Illuminate.Animation.FirSelection
 import Illuminate.Animation.Render
 import Vir.Attributes
 import Vir.Browser
@@ -165,6 +165,64 @@ private structure Mount where
 
 /-- Lean-owned animation instance retained as an opaque JavaScript resource. -/
 abbrev PlayerHandle := JSL Mount
+
+/-- Selection and scheduling decisions returned by the compact VIR player. -/
+structure SelectionPlayerOutput where
+  /-- Frame and playback decision selected by Lean. -/
+  action : FrameSelection
+  /-- Whether the browser host should request another animation frame. -/
+  scheduleNextFrame : Bool
+deriving Repr, BEq, Inhabited
+
+private structure SelectionRuntimeState where
+  player : PlayerState
+  action : FrameSelection
+
+private structure SelectionMount where
+  animation : SelectionAnimation
+  state : RuntimeRef SelectionRuntimeState
+
+/-- Lean-owned compact selection player retained as an opaque JavaScript resource. -/
+abbrev SelectionPlayerHandle := JSL SelectionMount
+
+private def selectionOutput
+    (action : FrameSelection)
+    (scheduleNextFrame : Bool) : SelectionPlayerOutput :=
+  { action, scheduleNextFrame }
+
+/-- Validates and mounts a compact VIR player without transferring SVG patch tables. -/
+@[vir_export]
+def mountSelectionPlayer
+    (animation : SelectionAnimation) : RuntimeM (Except String SelectionPlayerHandle) := do
+  match initialSelectionLive animation with
+  | .error message => pure (.error message)
+  | .ok initial => do
+      let state ← RuntimeRef.new { player := initial.state, action := initial.selection }
+      .ok <$> LeanRef.toJSL { animation, state }
+
+/-- Returns the most recent decisions from a compact VIR player. -/
+@[vir_export]
+def selectionPlayerSnapshot
+    (handle : SelectionPlayerHandle) : RuntimeM SelectionPlayerOutput := do
+  let mount ← LeanRef.fromJSL handle
+  let current ← RuntimeRef.get mount.state
+  pure (selectionOutput current.action current.action.playback.isActive)
+
+/-- Applies one event to a compact VIR player and returns its next decisions. -/
+@[vir_export]
+def dispatchSelectionPlayer
+    (handle : SelectionPlayerHandle)
+    (event : PlayerEvent) : RuntimeM SelectionPlayerOutput := do
+  let mount ← LeanRef.fromJSL handle
+  let current ← RuntimeRef.get mount.state
+  let next := transitionSelectionLive mount.animation current.player event
+  RuntimeRef.set mount.state { player := next.state, action := next.selection }
+  pure (selectionOutput next.selection next.scheduleNextFrame)
+
+/-- Releases an owned compact VIR player handle. -/
+@[vir_export]
+def disposeSelectionPlayer (handle : SelectionPlayerHandle) : RuntimeM Unit :=
+  LeanRef.releaseJSL handle
 
 private def indexElements (container : Js Element) : DomM (Array (Option (Js Element))) := do
   let nodes ← Element.querySelectorAll container "[data-e]"

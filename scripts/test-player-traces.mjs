@@ -8,6 +8,10 @@ import {
     prepareVirPlayerAnimation,
     prepareVirPlayerEvents,
 } from "./lib/vir-player-trace.mjs";
+import {
+    projectVirSelectionAnimation,
+    projectVirSelectionEvent,
+} from "../player_js/vir_selection_player.js";
 
 import { createIlluminatePlayerAdapter } from "../test_output/native/illuminate-player-browser-adapter.mjs";
 import {
@@ -480,6 +484,60 @@ function materializeSelections(data, actions) {
     });
 }
 
+function selectionNat(value, label) {
+    const number = typeof value === "number" ? value : Number(value);
+    assert.ok(Number.isSafeInteger(number) && number >= 0, `${label} is not a natural number`);
+    return number;
+}
+
+function normalizeVirSelectionOutput(output, label) {
+    assert.equal(
+        output.scheduleNextFrame,
+        ["playing", "looping", "finishingLoop"].includes(output.action.playback),
+        `${label} scheduling decision`,
+    );
+    return {
+        frame: selectionNat(output.action.frame, `${label}.frame`),
+        step: selectionNat(output.action.step, `${label}.step`),
+        segment: selectionNat(output.action.segment, `${label}.segment`),
+        localFrame: selectionNat(output.action.localFrame, `${label}.localFrame`),
+        segmentChanged: output.action.segmentChanged,
+        playback: output.action.playback,
+    };
+}
+
+function replayVirSelections(data, events) {
+    const mounted = runtime.call(
+        "Illuminate.Animation.Vir.mountSelectionPlayer",
+        projectVirSelectionAnimation(data),
+    );
+    assert.equal(mounted.kind, "ok", mounted.value);
+    const handle = mounted.value;
+    try {
+        const actions = [
+            normalizeVirSelectionOutput(
+                runtime.call("Illuminate.Animation.Vir.selectionPlayerSnapshot", handle),
+                "VIR selection initial",
+            ),
+        ];
+        for (const [index, event] of events.entries()) {
+            actions.push(
+                normalizeVirSelectionOutput(
+                    runtime.call(
+                        "Illuminate.Animation.Vir.dispatchSelectionPlayer",
+                        handle,
+                        projectVirSelectionEvent(event),
+                    ),
+                    `VIR selection event ${index}`,
+                ),
+            );
+        }
+        return actions;
+    } finally {
+        runtime.call("Illuminate.Animation.Vir.disposeSelectionPlayer", handle);
+    }
+}
+
 try {
     for (const testCase of cases) {
         const oracle = new LegacyPlayerOracle(testCase.data);
@@ -505,6 +563,14 @@ try {
         );
         assert.equal(typedResult.ok, true, typedResult.error);
         assert.deepEqual(typedResult.actions, expected, `${testCase.name} (VIR typed)`);
+        assert.deepEqual(
+            materializeSelections(
+                testCase.data,
+                replayVirSelections(testCase.data, testCase.events),
+            ),
+            expected,
+            `${testCase.name} (VIR selection)`,
+        );
         const nativeResult = native.replayTrace(testCase.data, testCase.events);
         assert.equal(nativeResult.ok, true, nativeResult.error);
         assert.deepEqual(nativeResult.actions, expected, testCase.name);
@@ -530,9 +596,49 @@ try {
         ok: false,
         error: "animation must contain at least one frame",
     });
+    const invalidSelectionResult = runtime.call(
+        "Illuminate.Animation.Vir.mountSelectionPlayer",
+        projectVirSelectionAnimation({ ...cases[0].data, totalFrames: 0 }),
+    );
+    assert.deepEqual(invalidSelectionResult, {
+        kind: "error",
+        value: "animation must contain at least one frame",
+    });
+    const compact = projectVirSelectionAnimation(cases[0].data);
+    const left = runtime.call("Illuminate.Animation.Vir.mountSelectionPlayer", compact);
+    const right = runtime.call("Illuminate.Animation.Vir.mountSelectionPlayer", compact);
+    assert.equal(left.kind, "ok");
+    assert.equal(right.kind, "ok");
+    runtime.call(
+        "Illuminate.Animation.Vir.dispatchSelectionPlayer",
+        left.value,
+        projectVirSelectionEvent({ kind: "seek", frame: 3 }),
+    );
+    assert.equal(
+        selectionNat(
+            runtime.call("Illuminate.Animation.Vir.selectionPlayerSnapshot", left.value).action
+                .frame,
+            "left isolated frame",
+        ),
+        3,
+    );
+    assert.equal(
+        selectionNat(
+            runtime.call("Illuminate.Animation.Vir.selectionPlayerSnapshot", right.value).action
+                .frame,
+            "right isolated frame",
+        ),
+        0,
+    );
+    runtime.call("Illuminate.Animation.Vir.disposeSelectionPlayer", left.value);
+    runtime.call("Illuminate.Animation.Vir.disposeSelectionPlayer", right.value);
+    assert.throws(
+        () => runtime.call("Illuminate.Animation.Vir.selectionPlayerSnapshot", left.value),
+        /released|resource|handle/i,
+    );
 } finally {
     runtime.dispose();
 }
 
-const backends = `legacy/VIR-JSON/VIR-typed/FIR-native${selection === null ? "" : "/FIR-selection"}`;
+const backends = `legacy/VIR-JSON/VIR-typed/VIR-selection/FIR-native${selection === null ? "" : "/FIR-selection"}`;
 console.log(`${cases.length} ${backends} player traces matched`);

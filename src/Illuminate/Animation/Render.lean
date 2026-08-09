@@ -111,9 +111,14 @@ private def virRevealJs : String :=
 private def firLivePlayerJs : String :=
   include_str "../../../player_js/fir_live_player.js"
 
+/-- Browser scheduling host for persistent selection-only VIR players. -/
+private def virSelectionPlayerJs : String :=
+  include_str "../../../player_js/vir_selection_player.js"
+
 /-- Browser harness for side-by-side JavaScript and Lean animation comparisons. -/
 private def comparisonJs : String :=
-  animCoreJs ++ "\n" ++ firLivePlayerJs ++ "\n" ++ include_str "../../../player_js/comparison.js"
+  animCoreJs ++ "\n" ++ firLivePlayerJs ++ "\n" ++ virSelectionPlayerJs ++ "\n" ++
+    include_str "../../../player_js/comparison.js"
 
 open Lean in
 private def comparisonDataToJson
@@ -324,23 +329,23 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 <header class=\"hero\">
   <p class=\"eyebrow\">Illuminate runtime laboratory</p>
   <h1>JavaScript and Lean, frame for frame.</h1>
-  <p class=\"lede\">Every example below receives the same generated animation data and synchronized commands. The JavaScript player runs the original algorithm; the candidate runs the Lean state machine through VIR or a staged persistent FIR package.</p>
+  <p class=\"lede\">Every example below receives the same generated animation data and synchronized commands. The JavaScript player runs the original algorithm; the candidate runs the Lean state machine through selection-only VIR, full VIR, or a staged FIR package.</p>
 </header>
 <nav class=\"toolbar\" aria-label=\"Comparison controls\">
   <button id=\"comparison-start\" type=\"button\">Play / advance all</button>
   <button id=\"comparison-pause\" class=\"quiet\" type=\"button\">Pause all</button>
   <button id=\"comparison-reset\" class=\"quiet\" type=\"button\">Reset all</button>
   <label class=\"auto cycle\"><input id=\"comparison-auto-cycle\" type=\"checkbox\" checked> Auto-cycle pauses and completed animations</label>
-  <label class=\"auto\">Candidate backend <select id=\"comparison-backend\"><option value=\"vir\">Lean · VIR</option><option value=\"fir\" disabled>Lean · FIR — persistent package required</option></select></label>
+  <label class=\"auto\">Candidate backend <select id=\"comparison-backend\"><option value=\"vir-selection\">Lean · VIR selection</option><option value=\"vir-full\">Lean · VIR full</option><option value=\"fir\" disabled>Lean · FIR selection — persistent package required</option></select></label>
   <label class=\"auto\"><input id=\"comparison-vir-timing\" type=\"checkbox\"> Runtime phase timing</label>
   <span id=\"comparison-status\" data-state=\"loading\">Loading one shared VIR runtime…</span>
 </nav>
 <section class=\"summaries\" aria-label=\"Aggregate statistics\">
   <article class=\"summary\" data-summary=\"js\"><span class=\"engine-dot js\"></span><h2>JavaScript aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span></article>
-  <article class=\"summary\" data-summary=\"candidate\"><span class=\"engine-dot vir\"></span><h2>Lean · VIR aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span></article>
+  <article class=\"summary\" data-summary=\"candidate\"><span class=\"engine-dot vir\"></span><h2>Lean · VIR selection aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span></article>
 </section>
 <main id=\"comparison-grid\"></main>
-<p class=\"method\">Rolling two-second window. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. FIR setup is shown separately from steady-state dispatch. Use the figures comparatively, not as a machine-independent benchmark.</p>
+<p class=\"method\">Rolling two-second window. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
 <script type=\"module\">
 {js}
 </script>

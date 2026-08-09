@@ -535,16 +535,18 @@ latest VIR main and retained-callback phase results in
 
 For a more visual comparison, the test suite generates a dashboard
 containing all of the `#animate` examples twice: once with the legacy
-JavaScript player and once with a selectable Lean runtime. VIR remains
-the default, while an accepted persistent FIR package is discovered
-under `test_output/fir-live`. Both columns receive the same controls
-and report rolling callback FPS, main-thread time, callback
-percentiles, long frames, and aggregate CPU estimates. Enable
-**Runtime phase timing** to split the Lean callback into input
-encoding, execution, decoding, reclamation, host rendering, and outer
-overhead. FIR additionally reports one-time creation and persistent
-memory. This diagnostic observer has measurable overhead and is
-intentionally off by default:
+JavaScript player and once with a selectable Lean runtime.
+Selection-only VIR is the default and shares the browser-owned patch
+renderer with FIR; the original full VIR renderer remains available as
+a control. An accepted persistent FIR package is discovered under
+`test_output/fir-live`. Both columns receive the same controls and
+report rolling callback FPS, main-thread time, callback percentiles,
+long frames, and aggregate CPU estimates. Enable **Runtime phase
+timing** to split the Lean callback into input encoding, execution,
+decoding, reclamation, host rendering, and outer overhead. The
+selection lanes additionally report one-time projection and creation;
+FIR also reports persistent memory. This diagnostic observer has
+measurable overhead and is intentionally off by default:
 
 ```sh
 npm run demo:comparison
@@ -590,7 +592,8 @@ frame, step, segment, local frame, and playback state. The host
 materializes the selected patch row without reconstructing any timing
 or playback decision. The v2 whole-trace and v3 persistent packages
 remain useful as frozen performance baselines. The matched JavaScript,
-FIR, and current VIR boundary comparison is recorded in
+selection-only VIR, full VIR, and FIR boundary comparison is recorded
+in
 [PLAYER_SELECTION_BOUNDARY_REPORT.md](PLAYER_SELECTION_BOUNDARY_REPORT.md).
 
 ## Module Overview

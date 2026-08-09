@@ -7,6 +7,7 @@
  * }} ComparisonExample
  * @typedef {{
  *   call(name: string, ...args: unknown[]): unknown,
+ *   callTimed(name: string, ...args: unknown[]): { value: unknown, timings: RuntimeCallTimings },
  *   setCallbackTimingObserver(observer: ((timings: RuntimeCallTimings) => void) | null): void,
  *   dispose(): void
  * }} ComparisonVirRuntime
@@ -50,6 +51,15 @@
  *   renderMs: number,
  *   totalMs: number
  * }} ComparisonFirObservation
+ * @typedef {{
+ *   kind: "create" | "dispatch",
+ *   operation: string,
+ *   runtimeTimings: Record<string, number> | null,
+ *   runtimeWallMs: number,
+ *   projectMs: number,
+ *   renderMs: number,
+ *   totalMs: number
+ * }} ComparisonVirSelectionObservation
  * @typedef {{
  *   frame: number,
  *   step: number,
@@ -206,6 +216,37 @@
             hostMs: observation.renderMs,
             totalMs: runtimeTotal + observation.renderMs,
             scratchBytes: Number(memory?.scratchBytes ?? 0),
+        });
+        pruneSamples(value, now);
+    }
+
+    /** @param {ComparisonVirSelectionObservation} observation */
+    function recordVirSelectionObservation(observation) {
+        if (currentOwner === null) return;
+        var value = metrics.get(currentOwner);
+        if (!value || value.engine !== "vir") return;
+        var timings = observation.runtimeTimings;
+        if (observation.kind === "create") {
+            value.creation = {
+                totalMs: observation.runtimeWallMs,
+                projectMs: observation.projectMs,
+                encodeMs: timings?.marshalMs ?? 0,
+                persistentBytes: 0,
+            };
+            return;
+        }
+        if (observation.operation !== "tick" || !phaseTiming?.checked) return;
+        var now = performance.now();
+        var runtimeTotal = timings?.totalMs ?? observation.runtimeWallMs;
+        value.phaseSamples.push({
+            time: now,
+            marshalMs: timings?.marshalMs ?? 0,
+            executeMs: timings?.executeMs ?? 0,
+            decodeMs: timings?.decodeMs ?? 0,
+            rewindMs: 0,
+            hostMs: observation.renderMs,
+            totalMs: runtimeTotal + observation.renderMs,
+            scratchBytes: 0,
         });
         pruneSamples(value, now);
     }
@@ -538,7 +579,7 @@
      * @param {HTMLElement} target
      * @param {ReturnType<typeof phaseSnapshot>} snapshot
      * @param {boolean} enabled
-     * @param {"js" | "vir" | "fir"} engine
+     * @param {"js" | "vir-selection" | "vir-full" | "fir"} engine
      */
     function renderPhaseMetric(target, snapshot, enabled, engine) {
         /** @param {string} name @param {number} value */
@@ -562,7 +603,9 @@
                     ? "JavaScript selection callback"
                     : engine === "fir"
                       ? "FIR selection callback"
-                      : "VIR full callback";
+                      : engine === "vir-selection"
+                        ? "VIR selection callback"
+                        : "VIR full callback";
         }
         var inputLabel = target.querySelector("[data-phase-label=input]");
         if (inputLabel) {
@@ -571,7 +614,9 @@
                     ? "direct JS object"
                     : engine === "fir"
                       ? "event encode"
-                      : "marshal";
+                      : engine === "vir-selection"
+                        ? "event normalize"
+                        : "marshal";
         }
         var executeLabel = target.querySelector("[data-phase-label=execute]");
         if (executeLabel) {
@@ -582,7 +627,9 @@
         var hostLabel = target.querySelector("[data-phase-label=host]");
         if (hostLabel) {
             hostLabel.textContent =
-                engine === "js" || engine === "fir" ? "shared DOM apply" : "host ⊂ execute";
+                engine === "js" || engine === "fir" || engine === "vir-selection"
+                    ? "shared DOM apply"
+                    : "host ⊂ execute";
         }
         var count = target.querySelector("[data-phase-count]");
         if (count) {
@@ -596,16 +643,24 @@
             setup.textContent =
                 engine === "js"
                     ? "plain JS object · zero conversion"
-                    : engine === "fir" && creation
+                    : engine === "vir-selection" && creation
                       ? "create " +
                         formatNumber(creation.totalMs, 2) +
                         " ms · project " +
                         formatNumber(creation.projectMs, 2) +
-                        " ms · selection encode " +
+                        " ms · marshal " +
                         formatNumber(creation.encodeMs, 2) +
-                        " ms · resident " +
-                        formatBytes(creation.persistentBytes)
-                      : "shared runtime";
+                        " ms · retained Lean handle"
+                      : engine === "fir" && creation
+                        ? "create " +
+                          formatNumber(creation.totalMs, 2) +
+                          " ms · project " +
+                          formatNumber(creation.projectMs, 2) +
+                          " ms · selection encode " +
+                          formatNumber(creation.encodeMs, 2) +
+                          " ms · resident " +
+                          formatBytes(creation.persistentBytes)
+                        : "shared runtime";
         }
     }
 
@@ -744,13 +799,14 @@
         );
         phaseTiming = virTiming;
         function updateVirTiming() {
-            runtime.setCallbackTimingObserver(virTiming.checked ? recordVirCallbackTiming : null);
+            runtime.setCallbackTimingObserver(
+                virTiming.checked && currentBackend === "vir-full" ? recordVirCallbackTiming : null,
+            );
         }
         virTiming.addEventListener("change", updateVirTiming);
-        updateVirTiming();
 
         /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
-        function mountVirCandidate(data, index) {
+        function mountVirFullCandidate(data, index) {
             var mounted = /** @type {{ kind?: string, value?: unknown }} */ (
                 runtime.call(
                     "Illuminate.Animation.Vir.mountAnimation",
@@ -777,6 +833,27 @@
         }
 
         /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
+        function mountVirSelectionCandidate(data, index) {
+            var container = document.querySelector(
+                '[data-example="' + String(index) + '"] [data-stage="candidate"]',
+            );
+            if (!(container instanceof HTMLElement)) {
+                throw new Error("VIR selection candidate container is missing");
+            }
+            var renderer = createSelectionDomRenderer(data, container);
+            return createVirSelectionPlayerHost(
+                runtime,
+                data,
+                renderer,
+                undefined,
+                recordVirSelectionObservation,
+                function () {
+                    return Boolean(phaseTiming?.checked);
+                },
+            );
+        }
+
+        /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
         function mountFirCandidate(data, index) {
             if (firAdapter === null) throw new Error("FIR live backend is unavailable");
             var container = document.querySelector(
@@ -798,14 +875,15 @@
             );
         }
 
-        /** @type {"vir" | "fir"} */
-        var currentBackend = "vir";
+        /** @type {"vir-selection" | "vir-full" | "fir"} */
+        var currentBackend = "vir-selection";
+        updateVirTiming();
 
         /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
         function mountCandidate(data, index) {
-            return currentBackend === "fir"
-                ? mountFirCandidate(data, index)
-                : mountVirCandidate(data, index);
+            if (currentBackend === "fir") return mountFirCandidate(data, index);
+            if (currentBackend === "vir-full") return mountVirFullCandidate(data, index);
+            return mountVirSelectionCandidate(data, index);
         }
 
         /** @type {ComparisonRow[]} */
@@ -819,7 +897,7 @@
             var jsOwner = "js-" + String(index);
             var candidateOwner = currentBackend + "-" + String(index);
             registerMetrics(jsOwner, "js");
-            registerMetrics(candidateOwner, currentBackend);
+            registerMetrics(candidateOwner, currentBackend === "fir" ? "fir" : "vir");
             var legacy = withOwner(jsOwner, function () {
                 return mountLegacy(example.data, jsStage, recordJsSelectionTiming, function () {
                     return Boolean(phaseTiming?.checked);
@@ -842,23 +920,28 @@
         });
 
         function updateCandidatePresentation() {
-            var name = currentBackend === "fir" ? "Lean · FIR" : "Lean · VIR";
+            var name =
+                currentBackend === "fir"
+                    ? "Lean · FIR selection"
+                    : currentBackend === "vir-full"
+                      ? "Lean · VIR full"
+                      : "Lean · VIR selection";
             for (var label of document.querySelectorAll("[data-candidate-name]")) {
                 label.textContent = name;
             }
             for (var dot of document.querySelectorAll("[data-candidate-dot]")) {
-                dot.classList.toggle("vir", currentBackend === "vir");
+                dot.classList.toggle("vir", currentBackend !== "fir");
                 dot.classList.toggle("fir", currentBackend === "fir");
             }
             var summary = document.querySelector('[data-summary="candidate"]');
             var summaryName = summary?.querySelector("h2");
             if (summaryName) summaryName.textContent = name + " aggregate";
             var summaryDot = summary?.querySelector(".engine-dot");
-            summaryDot?.classList.toggle("vir", currentBackend === "vir");
+            summaryDot?.classList.toggle("vir", currentBackend !== "fir");
             summaryDot?.classList.toggle("fir", currentBackend === "fir");
         }
 
-        /** @param {"vir" | "fir"} backend */
+        /** @param {"vir-selection" | "vir-full" | "fir"} backend */
         function switchBackend(backend) {
             if (backend === currentBackend) return;
             if (backend === "fir" && firAdapter === null) {
@@ -880,9 +963,10 @@
                 article?.querySelector('[data-stage="candidate"]')?.replaceChildren();
             });
             currentBackend = backend;
+            updateVirTiming();
             rows.forEach(function (row, index) {
                 row.candidateOwner = currentBackend + "-" + String(row.index);
-                registerMetrics(row.candidateOwner, currentBackend);
+                registerMetrics(row.candidateOwner, currentBackend === "fir" ? "fir" : "vir");
                 row.candidate = withOwner(row.candidateOwner, function () {
                     return mountCandidate(row.data, row.index);
                 });
@@ -897,7 +981,10 @@
         }
 
         backendSelect.addEventListener("change", function () {
-            switchBackend(backendSelect.value === "fir" ? "fir" : "vir");
+            var backend = backendSelect.value;
+            switchBackend(
+                backend === "fir" ? "fir" : backend === "vir-full" ? "vir-full" : "vir-selection",
+            );
         });
         updateCandidatePresentation();
 

@@ -13,35 +13,33 @@ adapter must not repair or reinterpret a native result.
 
 ## Current boundary
 
-| Area                                                  | JavaScript reference                                                   | Lean/VIR/FIR implementation                                                           | Classification                    | Evidence                                                          |
-| ----------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------- | --------------------------------- | ----------------------------------------------------------------- |
-| Frame, step, pause, loop, and directed-play decisions | Mutable JavaScript player fields                                       | `PlayerState` and `PlayerEvent` transitions                                           | No intended semantic divergence   | 106 deterministic legacy/VIR/FIR traces                           |
-| Timestamp arithmetic                                  | JavaScript binary64 and positive rounding                              | Lean `Float`, transported as binary64, with JavaScript-compatible rounding            | No intended semantic divergence   | Boundary traces around frame rounding and non-integral timestamps |
-| Invalid generated data                                | Assumes the generator supplied valid data                              | Rejects malformed FPS, segments, steps, and parameter alignment once                  | Intentional validation difference | Lean validation tests and native rejected-create tests            |
-| Synchronization SVG                                   | Stored and installed by JavaScript                                     | Never transferred into the player; the browser installs it using the selected segment | Representation-only divergence    | SVG-free `PlayerAnimation` source and DOM structural tests        |
-| Patch target classification                           | Compares each attribute name with `textContent` while rendering        | Converts once to `PatchTarget.textContent` or `PatchTarget.attribute`                 | Representation-only divergence    | Differential actions exercise both constructors                   |
-| Parameter selection                                   | Selects the segment's local parameter row in JavaScript                | Lean emits the complete `AttributeUpdate` array                                       | No intended semantic divergence   | Full action-array differential tests                              |
-| Scheduling                                            | JavaScript derives whether to request another frame from mutable flags | Lean returns `scheduleNextFrame`; the host only follows it                            | Ownership-boundary divergence     | Host test covers schedule, cancellation, and disposal             |
-| Player ownership                                      | Ordinary JavaScript object and callback closure                        | VIR runtime reference or opaque FIR player handle                                     | Runtime-only divergence           | Two-player isolation and wrong-owner tests                        |
-| Per-event memory                                      | JavaScript garbage-collected allocations                               | FIR persistent animation/state below a checkpoint and resettable scratch above it     | Runtime-only divergence           | Required 10,000-tick frontier plateau                             |
-| DOM writes                                            | Applies every update returned for a frame                              | Applies every update returned for a frame                                             | No current operational divergence | Side-by-side DOM comparison                                       |
+| Area                                                  | JavaScript reference                                                   | Lean/VIR/FIR implementation                                                          | Classification                    | Evidence                                                          |
+| ----------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------ | --------------------------------- | ----------------------------------------------------------------- |
+| Frame, step, pause, loop, and directed-play decisions | Mutable JavaScript player fields                                       | `PlayerState` and `PlayerEvent` transitions                                          | No intended semantic divergence   | 106 deterministic legacy/VIR/FIR traces                           |
+| Timestamp arithmetic                                  | JavaScript binary64 and positive rounding                              | Lean `Float`, transported as binary64, with JavaScript-compatible rounding           | No intended semantic divergence   | Boundary traces around frame rounding and non-integral timestamps |
+| Invalid generated data                                | Assumes the generator supplied valid data                              | Rejects malformed FPS, segments, steps, and parameter alignment once                 | Intentional validation difference | Lean validation tests and native rejected-create tests            |
+| Synchronization SVG                                   | Stored and installed by JavaScript                                     | Selection VIR/FIR leave it in JavaScript; full VIR retains it beside the pure player | Representation-only divergence    | Compact projection guards and DOM structural tests                |
+| Patch target classification                           | Compares each attribute name with `textContent` while rendering        | Converts once to `PatchTarget.textContent` or `PatchTarget.attribute`                | Representation-only divergence    | Differential actions exercise both constructors                   |
+| Parameter selection                                   | Selects the segment's local parameter row in JavaScript                | Full VIR emits updates; selection VIR/FIR return indices for the shared JS renderer  | Boundary-only divergence          | Expanded compact actions match full actions                       |
+| Scheduling                                            | JavaScript derives whether to request another frame from mutable flags | Lean returns `scheduleNextFrame`; the host only follows it                           | Ownership-boundary divergence     | Host test covers schedule, cancellation, and disposal             |
+| Player ownership                                      | Ordinary JavaScript object and callback closure                        | VIR `JSL` handle or opaque FIR instance handle                                       | Runtime-only divergence           | Two-player isolation, release, and wrong-owner tests              |
+| Per-event memory                                      | JavaScript garbage-collected allocations                               | FIR persistent animation/state below a checkpoint and resettable scratch above it    | Runtime-only divergence           | Required 10,000-tick frontier plateau                             |
+| DOM writes                                            | Applies every update returned for a frame                              | Applies every update returned for a frame                                            | No current operational divergence | Side-by-side DOM comparison                                       |
 
-## Proposed compact live boundary
+## Compact live boundary
 
-The compact timeline/action boundary is not implemented. It will be
-considered only after the persistent FIR baseline is accepted.
+The compact timeline/action boundary is implemented by FIR v4 and the
+selection-only VIR player. It removes parameter strings and bindings
+from the Lean timeline. Lean still selects the frame, step, segment,
+local frame, segment-change flag, playback state, and whether another
+callback is required. The browser uses those indices to retrieve
+immutable rendering data and apply it. This moves a mechanical array
+lookup without moving pause, loop, seek, timing, or playback decisions
+into JavaScript.
 
-The proposed change removes parameter strings and bindings from the
-native timeline. Lean would still select the frame, step, segment, and
-local frame; the browser would use those indices to retrieve immutable
-rendering data and apply it. This changes where a mechanical array
-lookup occurs, but it does not move pause, loop, seek, timing, or
-playback decisions into JavaScript.
-
-The existing full `FrameAction` path will remain the oracle. A
-differential test must expand every compact action through the
-original animation data and match the full action exactly before the
-compact boundary can be enabled.
+The existing full `FrameAction` path remains the oracle. Differential
+tests expand every compact action through the original animation data
+and require exact agreement before either compact runtime is accepted.
 
 ## Change protocol
 

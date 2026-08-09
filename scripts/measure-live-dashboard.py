@@ -148,9 +148,13 @@ def main():
             observations = []
             url = f"http://127.0.0.1:{server.server_address[1]}/{html.name}"
             for round_index in range(args.runs):
-                order = ["vir", "fir"] if round_index % 2 == 0 else ["fir", "vir"]
+                order = (
+                    ["vir-selection", "vir-full", "fir"]
+                    if round_index % 2 == 0
+                    else ["fir", "vir-full", "vir-selection"]
+                )
                 if args.allow_vir_only and not fir_build.exists():
-                    order = ["vir"]
+                    order = ["vir-selection", "vir-full"]
                 for backend in order:
                     context = browser.new_context()
                     try:
@@ -186,7 +190,7 @@ def main():
     build = json.loads(fir_build.read_text()) if fir_build.exists() else None
     summaries = {
         backend: summary
-        for backend in ("vir", "fir")
+        for backend in ("vir-selection", "vir-full", "fir")
         if (summary := summarize_backend(observations, backend)) is not None
     }
     report = {
@@ -197,6 +201,8 @@ def main():
             "paintAndCompositingIncluded": False,
             "timestampPolicy": "independent browser requestAnimationFrame callbacks",
             "rollingWindowMs": 2000,
+            "sharedSelectionRenderer": ["js", "vir-selection", "fir"],
+            "fullVirOwnsPatchRendering": True,
             "sharedJsFirRenderer": True,
             "jsInput": "original JavaScript AnimData object without conversion",
         },

@@ -10,6 +10,7 @@
         "stage:players": "npm run stage:vir && npm run stage:native",
         "stage:vir": "bash scripts/stage-vir-player.sh",
         "test:fir-live-host": "node --no-warnings scripts/test-fir-live-player.mjs",
+        "test:vir-selection-host": "node --no-warnings scripts/test-vir-selection-player.mjs",
         "test:fir-live-package": "node --no-warnings scripts/test-fir-live-package.mjs",
         "test:player-traces": "node --no-warnings scripts/test-player-traces.mjs",
         "test:vir-traces": "npm run test:player-traces"
