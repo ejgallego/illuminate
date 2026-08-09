@@ -6,11 +6,278 @@ Author: David Thrane Christiansen
 module
 import Illuminate
 import IlluminateTests.Helpers
+import IlluminateTests.AnimationExamples
 public section
 
 open Illuminate
+open Illuminate.AnimationPlayer
 
 private def step (d : Float) : Step := { duration := d }
+
+private def playerSegment
+    (start count element : Nat)
+    (attrName value : String) : Segment :=
+  { startFrame := start
+    frameCount := count
+    syncFrame := s!"<svg data-segment=\"{start}\"></svg>"
+    paramMap := #[{ elemIdx := element, attr := attrName }]
+    params := Array.replicate count #[value] }
+
+private def playerAnimation
+    (totalFrames : Nat)
+    (steps : Array StepInfo)
+    (segments : Array Segment := #[playerSegment 0 totalFrames 2 "opacity" "1"]) :
+    CompiledAnimation :=
+  { fps := 10, totalFrames, segments, steps }
+
+private def expectTransition (result : Except String Transition) : IO Transition :=
+  match result with
+  | .ok transition => pure transition
+  | .error message => throw <| IO.userError message
+
+private def expectPrepared (result : Except String PlayerAnimation) : IO PlayerAnimation :=
+  match result with
+  | .ok animation => pure animation
+  | .error message => throw <| IO.userError message
+
+private def expectActions
+    (result : Except String (Array FrameAction)) : IO (Array FrameAction) :=
+  match result with
+  | .ok actions => pure actions
+  | .error message => throw <| IO.userError message
+
+private def expectLive (result : Except String LiveTransition) : IO LiveTransition :=
+  match result with
+  | .ok transition => pure transition
+  | .error message => throw <| IO.userError message
+
+private def expectSelectionLive
+    (result : Except String LiveSelectionTransition) : IO LiveSelectionTransition :=
+  match result with
+  | .ok transition => pure transition
+  | .error message => throw <| IO.userError message
+
+/-!
+# Pure player tests
+-/
+
+def playerTests : List (String × IO Unit) :=
+  [ ("player: frame helpers", do
+      assertTrue (clampFrame 10 15 == 9) "frame clamps to last"
+      assertTrue (elapsedFrame 0 250 10 3 == 6) "half frame rounds like JavaScript"
+      assertTrue ((wrapLoop 27 10 20) == { wrapped := 17, didCycle := true })
+        "loop preserves overshoot")
+  , ("player: preparation drops SVG and normalizes patch targets", do
+      let animation := playerAnimation 4 #[{ frame := 0, pause := false, loop := false }] #[
+        playerSegment 0 2 1 "fill" "red",
+        playerSegment 2 2 3 "textContent" "done"
+      ]
+      let prepared ← expectPrepared (prepare animation)
+      assertTrue (prepared.segments.size == animation.segments.size)
+        "prepared animation preserves segment count"
+      assertTrue (prepared.segments[0]!.paramMap[0]!.target == .attribute "fill")
+        "attribute target is normalized"
+      assertTrue (prepared.segments[1]!.paramMap[0]!.target == .textContent)
+        "text target is normalized")
+  , ("player: prepared and compatibility transitions agree", do
+      let animation := playerAnimation 10 #[
+        { frame := 0, pause := false, loop := false },
+        { frame := 5, pause := true, loop := false }
+      ]
+      let prepared ← expectPrepared (prepare animation)
+      let fastInitial := initialPrepared prepared
+      let wrappedInitial ← expectTransition (initialTransition animation)
+      assertTrue (fastInitial == wrappedInitial) "initial paths agree"
+      let event := PlayerEvent.seek 7
+      let fast := transitionPrepared prepared fastInitial.state event
+      let wrapped ← expectTransition (transition animation wrappedInitial.state event)
+      assertTrue (fast == wrapped) "transition paths agree")
+  , ("player: prepared trace entry returns one action per boundary", do
+      let animation := playerAnimation 10 #[{ frame := 0, pause := false, loop := false }]
+      let prepared ← expectPrepared (prepare animation)
+      let events := [PlayerEvent.advance, .tick 0, .pause]
+      let actions ← expectActions (replayTrace prepared events)
+      assertTrue (actions.size == events.length + 1) "trace includes its initial action"
+      assertTrue (actions[0]!.playback == .paused) "trace begins paused"
+      assertTrue (actions[1]!.playback == .playing) "advance starts trace playback"
+      assertTrue (actions[3]!.playback == .paused) "pause ends trace playback")
+  , ("player: live FIR boundary exposes scheduling decisions", do
+      let animation := playerAnimation 10 #[{ frame := 0, pause := false, loop := false }]
+      let prepared ← expectPrepared (prepare animation)
+      let initial ← expectLive (initialLive prepared)
+      assertTrue (!initial.scheduleNextFrame) "initial paused player does not schedule"
+      let playing := transitionLive prepared initial.state .advance
+      assertTrue playing.scheduleNextFrame "active player schedules a callback"
+      assertTrue (playing.action.playback == .playing) "advance starts playback"
+      let paused := transitionLive prepared playing.state .pause
+      assertTrue (!paused.scheduleNextFrame) "paused player cancels callbacks"
+      assertTrue (paused.action.playback == .paused) "pause stops playback")
+  , ("player: compact FIR selection agrees without patch tables", do
+      let animation := playerAnimation 20 #[
+        { frame := 0, pause := false, loop := false },
+        { frame := 5, pause := true, loop := false },
+        { frame := 10, pause := false, loop := true }
+      ]
+      let prepared ← expectPrepared (prepare animation)
+      let compact := SelectionAnimation.ofPlayerAnimation prepared
+      assertTrue (compact.timeline.segments.all fun segment =>
+        segment.paramMap.isEmpty && segment.params.isEmpty)
+        "compact input drops every browser-owned patch table"
+      let fullInitial ← expectLive (initialLive prepared)
+      let compactInitial ← expectSelectionLive (initialSelectionLive compact)
+      assertTrue (compactInitial.state == fullInitial.state) "initial states agree"
+      assertTrue (compactInitial.selection == fullInitial.action.toSelection)
+        "initial selections agree"
+      let events : List PlayerEvent := [
+        .advance,
+        .tick 49.99999999999999,
+        .pause,
+        .seek 3,
+        .playTo 7 false,
+        .loopAt 10
+      ]
+      let mut fullState := fullInitial.state
+      let mut compactState := compactInitial.state
+      for event in events do
+        let full := transitionLive prepared fullState event
+        let selected := transitionSelectionLive compact compactState event
+        assertTrue (selected.state == full.state) s!"states agree after {reprStr event}"
+        assertTrue (selected.selection == full.action.toSelection)
+          s!"selections agree after {reprStr event}"
+        assertTrue (selected.scheduleNextFrame == full.scheduleNextFrame)
+          s!"scheduling agrees after {reprStr event}"
+        fullState := full.state
+        compactState := selected.state
+      match initialSelectionLive { timeline := prepared } with
+      | .error _ => pure ()
+      | .ok _ => throw <| IO.userError "compact boundary accepted a transferred patch table")
+  , ("player: preparation rejects segment gaps accepted by the legacy host", do
+      let malformed := playerAnimation 4 #[{ frame := 0, pause := false, loop := false }] #[
+        playerSegment 0 2 1 "fill" "red",
+        playerSegment 3 1 1 "fill" "blue"
+      ]
+      match prepare malformed with
+      | .error _ => pure ()
+      | .ok _ => throw <| IO.userError "segment coverage was not validated")
+  , ("player: preparation rejects misaligned parameter rows", do
+      let segment := playerSegment 0 2 1 "fill" "red"
+      let malformed := playerAnimation 2 #[{ frame := 0, pause := false, loop := false }] #[
+        { segment with params := #[#[], #["red"]] }
+      ]
+      match prepare malformed with
+      | .error _ => pure ()
+      | .ok _ => throw <| IO.userError "parameter alignment was not validated")
+  , ("player: initialization selects patches", do
+      let animation := playerAnimation 10 #[{ frame := 0, pause := false, loop := false }]
+      let initial ← expectTransition (initialTransition animation)
+      assertTrue initial.action.segmentChanged "initial segment is installed"
+      assertTrue (initial.action.updates == #[{
+        element := 2, target := .attribute "opacity", value := "1"
+      }]) "initial parameters are selected")
+  , ("player: pause crossed by timestamp jump", do
+      let animation := playerAnimation 12 #[
+        { frame := 0, pause := false, loop := false },
+        { frame := 5, pause := true, loop := false }
+      ]
+      let initial ← expectTransition (initialTransition animation)
+      let started ← expectTransition (transition animation initial.state .advance)
+      let anchored ← expectTransition (transition animation started.state (.tick 100))
+      let paused ← expectTransition (transition animation anchored.state (.tick 700))
+      assertTrue (paused.action.frame == 5) "jump stops at pause frame"
+      assertTrue (paused.action.playback == .waiting) "jump waits for interaction")
+  , ("player: large jump finishes", do
+      let animation := playerAnimation 10 #[
+        { frame := 0, pause := false, loop := false },
+        { frame := 6, pause := false, loop := false }
+      ]
+      let initial ← expectTransition (initialTransition animation)
+      let started ← expectTransition (transition animation initial.state .advance)
+      let anchored ← expectTransition (transition animation started.state (.tick 0))
+      let finished ← expectTransition (transition animation anchored.state (.tick 5000))
+      assertTrue (finished.action.frame == 9) "large jump clamps to last frame"
+      assertTrue (finished.action.step == 1) "large jump updates the final step"
+      assertTrue (finished.action.playback == .finished) "large jump finishes playback")
+  , ("player: end overshoot still stops at crossed pause", do
+      let animation := playerAnimation 10 #[
+        { frame := 0, pause := false, loop := false },
+        { frame := 5, pause := true, loop := false }
+      ]
+      let initial ← expectTransition (initialTransition animation)
+      let started ← expectTransition (transition animation initial.state .advance)
+      let anchored ← expectTransition (transition animation started.state (.tick 0))
+      let paused ← expectTransition (transition animation anchored.state (.tick 5000))
+      assertTrue (paused.action.frame == 5) "end overshoot stops at pause frame"
+      assertTrue (paused.action.playback == .waiting) "end overshoot waits at crossed pause")
+  , ("player: final loop wraps with overshoot", do
+      let animation := playerAnimation 10 #[{ frame := 0, pause := false, loop := true }]
+      let initial ← expectTransition (initialTransition animation)
+      let started ← expectTransition (transition animation initial.state .advance)
+      let anchored ← expectTransition (transition animation started.state (.tick 0))
+      let wrapped ← expectTransition (transition animation anchored.state (.tick 1250))
+      assertTrue (wrapped.action.frame == 3) "loop wraps rounded overshoot"
+      assertTrue (wrapped.action.playback == .looping) "final loop remains active")
+  , ("player: loop exit waits for boundary", do
+      let animation := playerAnimation 20 #[
+        { frame := 0, pause := false, loop := true },
+        { frame := 10, pause := false, loop := false }
+      ]
+      let initial ← expectTransition (initialTransition animation)
+      let started ← expectTransition (transition animation initial.state .advance)
+      let anchored ← expectTransition (transition animation started.state (.tick 0))
+      let pending ← expectTransition (transition animation anchored.state .advance)
+      assertTrue (pending.action.playback == .finishingLoop) "advance requests loop exit"
+      let exited ← expectTransition (transition animation pending.state (.tick 1100))
+      assertTrue (exited.action.frame == 10) "loop exits at following step"
+      assertTrue (exited.action.playback == .playing) "following step plays")
+  , ("player: seek and replay", do
+      let animation := playerAnimation 10 #[{ frame := 0, pause := false, loop := false }]
+      let initial ← expectTransition (initialTransition animation)
+      let sought ← expectTransition (transition animation initial.state (.seek 99))
+      assertTrue (sought.action.frame == 9) "seek clamps"
+      assertTrue (sought.action.playback == .finished) "seek to end marks finished"
+      let replayed ← expectTransition (transition animation sought.state .advance)
+      assertTrue (replayed.action.frame == 0) "advance from end replays"
+      assertTrue replayed.action.playback.isActive "replay schedules playback")
+  , ("player: directed playback moves forward and backward", do
+      let animation := playerAnimation 12 #[{ frame := 0, pause := false, loop := false }]
+      let initial ← expectTransition (initialTransition animation)
+      let forward ← expectTransition (transition animation initial.state (.playTo 6))
+      let anchored ← expectTransition (transition animation forward.state (.tick 100))
+      let midway ← expectTransition (transition animation anchored.state (.tick 400))
+      assertTrue (midway.action.frame == 3) "directed playback advances toward target"
+      let arrived ← expectTransition (transition animation midway.state (.tick 700))
+      assertTrue (arrived.action.frame == 6) "directed playback reaches target"
+      assertTrue (arrived.action.playback == .paused) "directed playback pauses at target"
+      let reverse ← expectTransition (transition animation arrived.state (.playTo 2))
+      let reverseAnchor ← expectTransition (transition animation reverse.state (.tick 800))
+      let reversed ← expectTransition (transition animation reverseAnchor.state (.tick 1200))
+      assertTrue (reversed.action.frame == 2) "directed playback reaches reverse target"
+      assertTrue (reversed.action.playback == .paused) "reverse target pauses")
+  , ("player: directed playback enters target loop", do
+      let animation := playerAnimation 12 #[
+        { frame := 0, pause := false, loop := false },
+        { frame := 5, pause := true, loop := true }
+      ]
+      let initial ← expectTransition (initialTransition animation)
+      let directed ← expectTransition (transition animation initial.state (.playTo 5 true))
+      let anchored ← expectTransition (transition animation directed.state (.tick 0))
+      let arrived ← expectTransition (transition animation anchored.state (.tick 500))
+      assertTrue (arrived.action.frame == 5) "directed playback reaches loop start"
+      assertTrue (arrived.action.playback == .looping) "directed playback enters target loop"
+      let paused ← expectTransition (transition animation arrived.state .pause)
+      assertTrue (paused.action.playback == .paused) "explicit pause stops target loop")
+  , ("player: structural segment change", do
+      let animation := playerAnimation 4 #[{ frame := 0, pause := false, loop := false }] #[
+        playerSegment 0 2 1 "fill" "red",
+        playerSegment 2 2 3 "textContent" "done"
+      ]
+      let initial ← expectTransition (initialTransition animation)
+      let changed ← expectTransition (transition animation initial.state (.seek 2))
+      assertTrue changed.action.segmentChanged "seek installs second segment"
+      assertTrue (changed.action.updates == #[{
+        element := 3, target := .textContent, value := "done"
+      }]) "text patch is selected")
+  ]
 
 /-!
 # Easing tests
@@ -368,7 +635,12 @@ def compilationTests : List (String × IO Unit) :=
                 ])))
         (fps := 10)
       assertTrue (compiled.segments.size >= 2)
-        s!"expected ≥2 segments for stop count change, got {compiled.segments.size}")
+        s!"expected ≥2 segments for stop count change, got {compiled.segments.size}"
+      IO.FS.createDirAll "test_output"
+      let html := compiled.renderHTML
+      let virHtml := compiled.renderVirHTML
+      IO.FS.writeFile "test_output/anim-segment-test.html" html
+      IO.FS.writeFile "test_output/anim-vir-segment-test.html" virHtml)
   , ("compile: styled text span color tracked", do
       -- A styled text with two spans; the second span's color varies.
       -- The per-tspan fill attribute should appear in paramMap.
@@ -416,7 +688,10 @@ def compilationTests : List (String × IO Unit) :=
         (fps := 60)
       let html := compiled.renderHTML
       IO.FS.writeFile "test_output/anim-seek-test.html" html
-      IO.println s!"  → wrote test_output/anim-seek-test.html ({html.length} bytes)")
+      let virHtml := compiled.renderVirHTML
+      IO.FS.writeFile "test_output/anim-vir-seek-test.html" virHtml
+      IO.println s!"  → wrote test_output/anim-seek-test.html ({html.length} bytes)"
+      IO.println s!"  → wrote test_output/anim-vir-seek-test.html ({virHtml.length} bytes)")
   , ("compile: write standalone HTML for loop test", do
       let steps : List Step := [{ duration := 2.0, loop := true }]
       let compiled := compileAnimation steps
@@ -428,13 +703,16 @@ def compilationTests : List (String × IO Unit) :=
         (fps := 60)
       let html := compiled.renderHTML
       IO.FS.writeFile "test_output/anim-loop-test.html" html
-      IO.println s!"  → wrote test_output/anim-loop-test.html ({html.length} bytes)")
+      let virHtml := compiled.renderVirHTML
+      IO.FS.writeFile "test_output/anim-vir-loop-test.html" virHtml
+      IO.println s!"  → wrote test_output/anim-loop-test.html ({html.length} bytes)"
+      IO.println s!"  → wrote test_output/anim-vir-loop-test.html ({virHtml.length} bytes)")
   , ("compile: write dual-animation HTML for global clobbering test", do
       -- Animation A: red circle grows, pulses color in a loop, then grows again
       let compiledA := compileAnimation
-        [{ duration := 0, pause := true }, step 1.5,
-         { duration := 1.0, loop := true, pause := true },
-         { duration := 0, pause := true }, step 2.0]
+        [{ duration := 0, pause := true }, step 0.2,
+         { duration := 0.2, loop := true, pause := true },
+         { duration := 0, pause := true }, step 0.2]
         (fun progress =>
           let r1 := Interpolate.interpolate 10.0 25.0 progress[1]
           let r := Interpolate.interpolate r1 40.0 progress[4]
@@ -445,8 +723,8 @@ def compilationTests : List (String × IO Unit) :=
         (fps := 60)
       -- Animation B: blue square shrinks in 2 pause-driven stages
       let compiledB := compileAnimation
-        [{ duration := 0, pause := true }, step 2.0,
-         { duration := 0, pause := true }, step 1.5]
+        [{ duration := 0, pause := true }, step 0.2,
+         { duration := 0, pause := true }, step 0.2]
         (fun progress =>
           let s1 := Interpolate.interpolate 60.0 40.0 progress[1]
           let sz := Interpolate.interpolate s1 20.0 progress[3]
@@ -454,6 +732,8 @@ def compilationTests : List (String × IO Unit) :=
         (fps := 60)
       let snippetA := compiledA.renderRevealHTML "#anim-a"
       let snippetB := compiledB.renderRevealHTML "#anim-b"
+      let virSnippetA := compiledA.renderVirRevealHTML "#anim-a"
+      let virSnippetB := compiledB.renderVirRevealHTML "#anim-b"
       -- Minimal Reveal mock: click advances, right-click/backspace goes back.
       -- Must appear BEFORE animation snippets so window.Reveal exists when they
       -- call addEventListener. Fragments are queried lazily since they are
@@ -462,10 +742,11 @@ def compilationTests : List (String × IO Unit) :=
 <script>
 (function() {
   window.Reveal = {
-    listeners: { shown: [], hidden: [] },
+    listeners: { shown: [], hidden: [], slide: [] },
     addEventListener: function(type, fn) {
       if (type === 'fragmentshown') this.listeners.shown.push(fn);
       if (type === 'fragmenthidden') this.listeners.hidden.push(fn);
+      if (type === 'slidechanged') this.listeners.slide.push(fn);
     }
   };
 })();
@@ -527,7 +808,19 @@ p \{ color: #888; font-size: 14px; }
 {harness}
 </body></html>"
       IO.FS.writeFile "test_output/anim-dual-test.html" html
+      let virHtml := html
+        |>.replace snippetA virSnippetA
+        |>.replace snippetB virSnippetB
+      IO.FS.writeFile "test_output/anim-vir-dual-test.html" virHtml
       IO.println s!"  → wrote test_output/anim-dual-test.html ({html.length} bytes)")
+  , ("compile: write complete JS/VIR comparison dashboard", do
+      let html := renderAnimationComparisonHTML animationExampleCatalogue
+      IO.FS.writeFile "test_output/anim-comparison.html" html
+      assertTrue (animationExampleCatalogue.size == 16)
+        "comparison dashboard includes every #animate example"
+      assertContains html "JavaScript and Lean, frame for frame"
+        "comparison dashboard has its heading"
+      IO.println s!"  → wrote test_output/anim-comparison.html ({html.length} bytes)")
   ]
 
 /-!
@@ -535,4 +828,4 @@ p \{ color: #888; font-size: 14px; }
 -/
 
 def animationTests : List (String × IO Unit) :=
-  easingTests ++ interpolationTests ++ timelineTests ++ effectsTests ++ compilationTests
+  playerTests ++ easingTests ++ interpolationTests ++ timelineTests ++ effectsTests ++ compilationTests

@@ -24,22 +24,50 @@ Or for pytest mode:
 To update expected baselines:
     UPDATE_BASELINES=1 uv run test_playwright.py
 """
+import atexit
 import os
 import shutil
 import subprocess
 import sys
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from threading import Thread
+
+import pytest
 
 # ---------------------------------------------------------------------------
 # Ensure Playwright browsers are installed
 # ---------------------------------------------------------------------------
 
+
+def _chromium_launch_options():
+    """Uses a system Chromium when available, otherwise Playwright's browser."""
+    for executable in (
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium-browser",
+    ):
+        path = shutil.which(executable)
+        if path is not None:
+            return {"executable_path": path}
+    return {}
+
+
+@pytest.fixture(scope="session")
+def browser_type_launch_args():
+    """Configures pytest-playwright to reuse an installed Chromium when possible."""
+    return _chromium_launch_options()
+
+
 def ensure_browsers():
     """Install Playwright Chromium if not already present."""
     try:
         from playwright.sync_api import sync_playwright
+
         with sync_playwright() as p:
-            p.chromium.launch(headless=True).close()
+            p.chromium.launch(headless=True, **_chromium_launch_options()).close()
     except Exception:
         subprocess.run(
             [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -60,7 +88,7 @@ DOCKER_IMAGE = "illuminate-inkscape"
 def generate_svgs():
     """Run lake test to generate reference SVGs."""
     result = subprocess.run(
-        ["lake", "test"],
+        ["lake", "test", "--wfail"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -70,6 +98,87 @@ def generate_svgs():
         print("lake test stderr:", result.stderr, file=sys.stderr)
         raise RuntimeError(f"lake test failed:\n{result.stdout}")
     return result.stdout
+
+
+def stage_player_assets():
+    """Build and stage the repository-local VIR and FIR-native player assets."""
+    result = subprocess.run(
+        ["npm", "run", "stage:players"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=900,
+    )
+    if result.returncode != 0:
+        print("Player staging stderr:", result.stderr, file=sys.stderr)
+        raise RuntimeError(f"Player staging failed:\n{result.stdout}")
+    output = result.stdout
+    if os.environ.get("ILLUMINATE_FIR_LIVE_PLAYER_DIR"):
+        live_result = subprocess.run(
+            ["npm", "run", "stage:fir-live"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if live_result.returncode != 0:
+            print("FIR live staging stderr:", live_result.stderr, file=sys.stderr)
+            raise RuntimeError(f"FIR live staging failed:\n{live_result.stdout}")
+        output += live_result.stdout
+    return output
+
+
+def run_player_trace_tests():
+    """Differentially compares JavaScript, VIR, and FIR-native traces."""
+    result = subprocess.run(
+        ["npm", "run", "test:player-traces"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=120,
+    )
+    if result.returncode != 0:
+        print("Player trace stderr:", result.stderr, file=sys.stderr)
+        raise RuntimeError(f"Player trace tests failed:\n{result.stdout}")
+    return result.stdout
+
+
+class _QuietTestOutputHandler(SimpleHTTPRequestHandler):
+    """Serves generated test output without logging every asset request."""
+
+    def log_message(self, format, *args):
+        pass
+
+
+_TEST_OUTPUT_SERVER = None
+_TEST_OUTPUT_THREAD = None
+
+
+def _stop_test_output_server():
+    """Stops the lazily created generated-output HTTP server."""
+    global _TEST_OUTPUT_SERVER, _TEST_OUTPUT_THREAD
+    if _TEST_OUTPUT_SERVER is not None:
+        _TEST_OUTPUT_SERVER.shutdown()
+        _TEST_OUTPUT_SERVER.server_close()
+        _TEST_OUTPUT_SERVER = None
+    if _TEST_OUTPUT_THREAD is not None:
+        _TEST_OUTPUT_THREAD.join(timeout=5)
+        _TEST_OUTPUT_THREAD = None
+
+
+def _test_output_url(name: str) -> str:
+    """Returns an HTTP URL for an output file so browser modules can load assets."""
+    global _TEST_OUTPUT_SERVER, _TEST_OUTPUT_THREAD
+    if _TEST_OUTPUT_SERVER is None:
+        handler = partial(_QuietTestOutputHandler, directory=str(ROOT / "test_output"))
+        _TEST_OUTPUT_SERVER = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+        _TEST_OUTPUT_THREAD = Thread(target=_TEST_OUTPUT_SERVER.serve_forever, daemon=True)
+        _TEST_OUTPUT_THREAD.start()
+    port = _TEST_OUTPUT_SERVER.server_address[1]
+    return f"http://127.0.0.1:{port}/{name}"
+
+
+atexit.register(_stop_test_output_server)
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +624,43 @@ def test_proof_tree_visual():
 # Standalone animation player tests
 # ---------------------------------------------------------------------------
 
+def _open_vir_player(page, name: str):
+    """Opens a staged VIR player and reports a visible initialization failure."""
+    html_path = ROOT / "test_output" / name
+    assert html_path.exists(), f"{name} not found — run lake test first"
+    package_set_path = (
+        ROOT
+        / "test_output"
+        / "vir"
+        / "module-sets"
+        / "Illuminate"
+        / "Animation"
+        / "Vir.irpkg-set.json"
+    )
+    assert package_set_path.exists(), "VIR player package set not found — run npm run stage:vir first"
+    page.goto(_test_output_url(name))
+    page.wait_for_function(
+        "document.getElementById('anim-status')?.dataset.state !== 'loading'",
+        timeout=30_000,
+    )
+    status = page.locator("#anim-status")
+    assert status.get_attribute("data-state") == "ready", status.text_content()
+
+
+def _animation_frames(page):
+    """Returns serialized initial and final SVG frames for a loaded player."""
+    initial = page.locator("#anim-container").inner_html()
+    maximum = int(page.locator("#anim-scrub").get_attribute("max"))
+    page.locator("#anim-scrub").evaluate(
+        """(element, value) => {
+            element.value = value;
+            element.dispatchEvent(new Event("input"));
+        }""",
+        str(maximum),
+    )
+    return initial, page.locator("#anim-container").inner_html()
+
+
 def test_standalone_player_seek_updates_content(page):
     """Scrubbing the standalone player to a different frame should change the displayed SVG.
 
@@ -550,6 +696,172 @@ def test_standalone_player_seek_updates_content(page):
     )
 
 
+def test_vir_player_matches_legacy_seek_trace(page):
+    """The VIR and legacy players should produce identical SVGs for the same seek trace."""
+    legacy_path = ROOT / "test_output" / "anim-seek-test.html"
+    assert legacy_path.exists(), "anim-seek-test.html not found — run lake test first"
+    page.goto(_test_output_url("anim-seek-test.html"))
+    legacy_frames = _animation_frames(page)
+
+    vir_page = page.context.new_page()
+    try:
+        _open_vir_player(vir_page, "anim-vir-seek-test.html")
+        vir_frames = _animation_frames(vir_page)
+    finally:
+        vir_page.close()
+
+    assert vir_frames == legacy_frames, (
+        "The Lean/VIR player and legacy JavaScript player produced different "
+        "initial or final SVG DOM for the same seek trace"
+    )
+
+
+def test_vir_player_replaces_segments_like_legacy(page):
+    """Structural segment changes should replace and re-index the SVG identically."""
+    legacy_path = ROOT / "test_output" / "anim-segment-test.html"
+    assert legacy_path.exists(), "anim-segment-test.html not found — run lake test first"
+    page.goto(_test_output_url("anim-segment-test.html"))
+    legacy_frames = _animation_frames(page)
+
+    vir_page = page.context.new_page()
+    try:
+        _open_vir_player(vir_page, "anim-vir-segment-test.html")
+        vir_frames = _animation_frames(vir_page)
+        maximum = vir_page.locator("#anim-scrub").get_attribute("max")
+        for frame in ("0", maximum, "0", maximum):
+            vir_page.locator("#anim-scrub").evaluate(
+                """(element, value) => {
+                    element.value = value;
+                    element.dispatchEvent(new Event("input"));
+                }""",
+                frame,
+            )
+            assert vir_page.locator("#anim-container svg").count() == 1
+    finally:
+        vir_page.close()
+
+    assert vir_frames == legacy_frames
+    assert legacy_frames[0] != legacy_frames[1]
+
+
+def test_vir_player_pause_cancels_pending_frame(page):
+    """Pausing while a callback is pending should leave the displayed frame stable."""
+    _open_vir_player(page, "anim-vir-seek-test.html")
+    page.click("#anim-play")
+    page.wait_for_timeout(50)
+    page.click("#anim-play")
+    paused_frame = page.locator("#anim-scrub").input_value()
+    page.wait_for_timeout(250)
+    assert page.locator("#anim-scrub").input_value() == paused_frame
+    assert page.locator("#anim-play").text_content() == "\u25B6"
+
+
+def test_vir_player_instances_are_independent(page):
+    """Two owned players in one VIR runtime should animate and dispose independently."""
+    page.goto(_test_output_url("anim-vir-dual-test.html"))
+    page.wait_for_function(
+        """() => {
+            const services = window.__illuminateVirRevealServices;
+            return services && services.size === 1 && [...services.values()][0].players.size === 2;
+        }""",
+        timeout=30_000,
+    )
+    assert page.locator("#anim-a svg").count() == 1
+    assert page.locator("#anim-b svg").count() == 1
+    initial_a = page.locator("#anim-a").inner_html()
+    initial_b = page.locator("#anim-b").inner_html()
+
+    page.evaluate(
+        """() => {
+            const service = [...window.__illuminateVirRevealServices.values()][0];
+            const player = [...service.players.values()].find(value => value.selector === '#anim-a');
+            const event = { fragment: player.fragments[1] };
+            Reveal.listeners.shown.forEach(callback => callback(event));
+        }"""
+    )
+    page.wait_for_timeout(350)
+    assert page.locator("#anim-a").inner_html() != initial_a
+    assert page.locator("#anim-b").inner_html() == initial_b
+
+    page.evaluate(
+        """() => {
+            const service = [...window.__illuminateVirRevealServices.values()][0];
+            const entry = [...service.players.entries()].find(([, value]) => value.selector === '#anim-a');
+            entry[1].dispose();
+            const other = [...service.players.entries()].find(([, value]) => value.selector === '#anim-b');
+            service.runtime.call('Illuminate.Animation.Vir.advancePlayer', other[0]);
+        }"""
+    )
+    page.wait_for_timeout(100)
+    assert page.evaluate(
+        "[...window.__illuminateVirRevealServices.values()][0].players.size"
+    ) == 1
+    assert page.locator("#anim-b").inner_html() != initial_b
+
+
+def test_vir_reveal_reverse_and_slide_pause(page):
+    """Reveal reverse navigation and slide changes should control only their player."""
+    page.goto(_test_output_url("anim-vir-dual-test.html"))
+    page.wait_for_function(
+        """() => {
+            const services = window.__illuminateVirRevealServices;
+            return services && [...services.values()][0]?.players.size === 2;
+        }""",
+        timeout=30_000,
+    )
+    initial = page.locator("#anim-a").inner_html()
+    page.evaluate(
+        """() => {
+            const service = [...window.__illuminateVirRevealServices.values()][0];
+            const player = [...service.players.values()].find(value => value.selector === '#anim-a');
+            Reveal.listeners.shown.forEach(callback => callback({ fragment: player.fragments[1] }));
+        }"""
+    )
+    page.wait_for_timeout(350)
+    assert page.locator("#anim-a").inner_html() != initial
+
+    page.evaluate(
+        """() => {
+            const service = [...window.__illuminateVirRevealServices.values()][0];
+            const player = [...service.players.values()].find(value => value.selector === '#anim-a');
+            Reveal.listeners.hidden.forEach(callback => callback({ fragment: player.fragments[1] }));
+        }"""
+    )
+    page.wait_for_function(
+        "initial => document.querySelector('#anim-a').innerHTML === initial",
+        arg=initial,
+        timeout=2_000,
+    )
+    assert page.locator("#anim-a").inner_html() == initial
+
+    page.evaluate(
+        """() => {
+            const service = [...window.__illuminateVirRevealServices.values()][0];
+            const player = [...service.players.values()].find(value => value.selector === '#anim-a');
+            Reveal.listeners.shown.forEach(callback => callback({ fragment: player.fragments[1] }));
+        }"""
+    )
+    page.wait_for_timeout(350)
+    page.evaluate(
+        "Reveal.listeners.slide.forEach(callback => callback({ previousSlide: document.body }))"
+    )
+    paused = page.locator("#anim-a").inner_html()
+    page.wait_for_timeout(250)
+    assert page.locator("#anim-a").inner_html() == paused
+
+
+def test_vir_player_disposes_while_playing(page):
+    """Navigating away while playing should dispose callbacks without page errors."""
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    _open_vir_player(page, "anim-vir-loop-test.html")
+    page.click("#anim-play")
+    page.wait_for_timeout(50)
+    page.goto("about:blank")
+    page.wait_for_timeout(100)
+    assert errors == []
+
+
 def test_standalone_player_loop_does_not_stop(page):
     """A single looping step should never reach 'stopped' state.
 
@@ -578,6 +890,14 @@ def test_standalone_player_loop_does_not_stop(page):
     )
 
 
+def test_vir_player_loop_does_not_stop(page):
+    """A VIR-backed looping step should remain active after a complete cycle."""
+    _open_vir_player(page, "anim-vir-loop-test.html")
+    page.click("#anim-play")
+    page.wait_for_timeout(2500)
+    assert page.locator("#anim-play").text_content() == "\u23F8"
+
+
 def test_standalone_player_dual_animation_independence(page):
     """Two animations embedded in the same page should each render into their own container.
 
@@ -604,6 +924,80 @@ def test_standalone_player_dual_animation_independence(page):
     )
 
 
+def test_animation_comparison_dashboard(page):
+    """The dashboard should mount every example twice and report common runtime statistics."""
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(_test_output_url("anim-comparison.html"))
+    page.wait_for_function("document.body.dataset.ready === 'true'", timeout=60_000)
+
+    assert page.locator(".example").count() == 16
+    assert page.locator(".stage svg").count() == 32
+    assert "16 examples · 32 owned players" in page.locator("#comparison-status").inner_text()
+    assert page.locator("#comparison-backend").input_value() == "vir"
+    fir_live_staged = (ROOT / "test_output" / "fir-live" / "BUILD.json").exists()
+    assert page.locator('#comparison-backend option[value="fir"]').evaluate(
+        "option => option.disabled"
+    ) is (not fir_live_staged)
+
+    page.wait_for_function(
+        """() => [...document.querySelectorAll('[data-summary-stat=fps]')]
+            .every(node => Number.parseFloat(node.textContent || '0') > 0)""",
+        timeout=10_000,
+    )
+    cpu_values = page.locator("[data-summary-stat=cpu]").all_inner_texts()
+    assert all(float(value.rstrip("%")) >= 0 for value in cpu_values)
+    page.locator("#comparison-vir-timing").check()
+    page.wait_for_function(
+        """() => [...document.querySelectorAll('[data-phase-count]')]
+            .every(node => Number.parseInt(node.textContent || '0', 10) > 0)""",
+        timeout=10_000,
+    )
+    phase_values = page.locator("[data-phase]").all_inner_texts()
+    assert len(phase_values) == 16 * 8
+    assert all(float(value.split()[0]) >= 0 for value in phase_values)
+    assert page.evaluate(
+        """() => [...document.querySelectorAll('[data-candidate-phases]')].every(panel =>
+            Number.parseFloat(panel.querySelector('[data-phase=host]')?.textContent || '0') <=
+            Number.parseFloat(panel.querySelector('[data-phase=execute]')?.textContent || '0'))"""
+    )
+    assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
+
+    if fir_live_staged:
+        page.locator("#comparison-backend").select_option("fir")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('[data-candidate-name]')]
+                .every(node => node.textContent === 'Lean · FIR')"""
+        )
+        page.click("#comparison-start")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('[data-phase-count]')]
+                .every(node => Number.parseInt(node.textContent || '0', 10) > 0)""",
+            timeout=10_000,
+        )
+        page.wait_for_function(
+            """() => [...document.querySelectorAll(
+                '[data-candidate-phases] [data-phase-setup]'
+              )].every(node => node.textContent?.startsWith('create '))""",
+            timeout=10_000,
+        )
+        assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
+
+    page.click("#comparison-pause")
+    page.wait_for_timeout(350)
+    assert all(
+        state in ("paused", "finished")
+        for state in page.locator("[data-row-state]").all_inner_texts()
+    )
+    page.click("#comparison-reset")
+    page.wait_for_timeout(350)
+    assert all(
+        value.startswith("0 / ") for value in page.locator("[data-frame]").all_inner_texts()
+    )
+    assert page.locator("[data-dom-match].mismatch").count() == 0
+    assert errors == []
+
+
 # ---------------------------------------------------------------------------
 # Direct runner (not pytest)
 # ---------------------------------------------------------------------------
@@ -614,6 +1008,15 @@ def main():
     output = generate_svgs()
     for line in output.strip().split("\n")[-3:]:
         print(f"  {line}")
+
+    print("\nStaging repository-local VIR and FIR-native player assets...")
+    player_output = stage_player_assets()
+    for line in player_output.strip().split("\n")[-3:]:
+        print(f"  {line}")
+
+    print("\nComparing JavaScript, VIR, and FIR-native player traces...")
+    trace_output = run_player_trace_tests()
+    print(f"  {trace_output.strip().splitlines()[-1]}")
 
     print("\nInstalling Playwright browsers if needed...")
     ensure_browsers()
@@ -630,8 +1033,16 @@ def main():
         test_stars_structure,
         test_cellophane_clip_structure,
         test_standalone_player_seek_updates_content,
+        test_vir_player_matches_legacy_seek_trace,
+        test_vir_player_replaces_segments_like_legacy,
+        test_vir_player_pause_cancels_pending_frame,
+        test_vir_player_instances_are_independent,
+        test_vir_reveal_reverse_and_slide_pause,
+        test_vir_player_disposes_while_playing,
         test_standalone_player_loop_does_not_stop,
+        test_vir_player_loop_does_not_stop,
         test_standalone_player_dual_animation_independence,
+        test_animation_comparison_dashboard,
     ]
 
     visual_tests = [
@@ -687,11 +1098,12 @@ def main():
 
     # Run structural tests with Playwright
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
+        browser = p.chromium.launch(headless=True, **_chromium_launch_options())
 
         for test_fn in structural_tests:
             name = test_fn.__name__
-            page = browser.new_page()
+            context = browser.new_context()
+            page = context.new_page()
             try:
                 test_fn(page)
                 print(f"  ✓ {name}")
@@ -700,7 +1112,7 @@ def main():
                 print(f"  ✗ {name}: {e}")
                 failed += 1
             finally:
-                page.close()
+                context.close()
 
         browser.close()
 

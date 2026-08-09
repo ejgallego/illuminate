@@ -1,5 +1,14 @@
 # Lake build artifacts
 .lake/
+.beam/
+__pycache__/
+/node_modules/
+
+# Task-local lean-vir checkout
+/vir/
+
+# Task-local FIR-native player package
+/native-player/
 
 # Generated SVGs from lake test
 *.svg

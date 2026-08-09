@@ -7,6 +7,9 @@ module
 public import Illuminate.Animation.Easing
 public import Illuminate.Animation.Interpolate
 public import Illuminate.Animation.Types
+public import Illuminate.Animation.Player
+public import Illuminate.Animation.FirLive
+public import Illuminate.Animation.FirSelection
 public import Illuminate.Animation.Animate
 public import Illuminate.Animation.Effects
 public import Illuminate.Animation.Compile

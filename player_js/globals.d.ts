@@ -25,13 +25,61 @@ interface AnimData {
     steps: StepInfo[];
 }
 
+interface FirComparisonAdapter {
+    createPlayer(animation: AnimData): unknown;
+    dispatch(player: unknown, event: unknown): unknown;
+    disposePlayer(player: unknown): void;
+}
+
+interface FirComparisonRenderer {
+    render(action: unknown): void;
+    dispose?(): void;
+}
+
+declare function createFirSelectionDomRenderer(
+    animation: AnimData,
+    container: HTMLElement,
+): FirComparisonRenderer;
+declare function createFirLivePlayerHost(
+    adapter: FirComparisonAdapter,
+    animation: AnimData,
+    renderer: FirComparisonRenderer,
+    scheduler?: {
+        request(callback: FrameRequestCallback): number;
+        cancel(handle: number): void;
+    },
+    observer?: ((observation: any) => void) | null,
+    observeDispatch?: (() => boolean) | null,
+): {
+    advance(): void;
+    pause(): void;
+    seek(frame: number): void;
+    dispose(): void;
+};
+
+interface Window {
+    __illuminateComparisonSnapshot?: () => unknown;
+}
+
 // standalone.js and reveal.js use these placeholders that are
 // string-replaced before the JS is embedded in HTML.
 declare var __ILLUMINATE_DATA_98712__: AnimData;
 declare var __ILLUMINATE_SELECTOR_98712__: string;
+declare var __ILLUMINATE_COMPARISON_DATA_98712__: Array<{
+    title: string;
+    data: AnimData;
+}>;
+declare var __ILLUMINATE_COMPARISON_RUNTIME_98712__: string;
+declare var __ILLUMINATE_COMPARISON_WASM_98712__: string;
+declare var __ILLUMINATE_COMPARISON_PACKAGE_SET_98712__: string;
+declare var __ILLUMINATE_VIR_RUNTIME_98712__: string;
+declare var __ILLUMINATE_VIR_WASM_98712__: string;
+declare var __ILLUMINATE_VIR_PACKAGE_SET_98712__: string;
 
 // reveal.js uses the Reveal.js API when available (3.x and 4.x)
 declare var Reveal: {
-    addEventListener?(type: string, fn: (e: { fragment: HTMLElement }) => void): void;
-    on?(type: string, fn: (e: { fragment: HTMLElement }) => void): void;
+    addEventListener?(type: string, fn: Function): void;
+    removeEventListener?(type: string, fn: Function): void;
+    on?(type: string, fn: Function): void;
+    off?(type: string, fn: Function): void;
 };

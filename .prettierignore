@@ -1,4 +1,8 @@
 .lake/
+.pytest_cache/
+/vir/
+/native-player/
+/player_js/generated/
 vendored_js/
 visual_tests/
 *.svg

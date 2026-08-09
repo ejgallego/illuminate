@@ -440,7 +440,9 @@ body uses the parameter as an ordinary value.
 ### The `#animate` Command
 
 The `#animate` command builds a step-based animation and plays it in
-the infoview with a play/pause button and scrub bar:
+the infoview with a play/pause button and scrub bar. Its player runs
+in Lean through VIR; React owns only the widget mount and releases the
+player when the widget is replaced:
 
 ```lean
 #animate
@@ -463,7 +465,131 @@ like `fadeIn`, `fadeOut`, `crossFade`, `slide`, `animScale`, and
 
 Compiled animations can also be rendered to standalone HTML files
 (`CompiledAnimation.renderHTML`) or embedded in reveal.js
-presentations (`CompiledAnimation.renderRevealHTML`).
+presentations (`CompiledAnimation.renderRevealHTML`). The
+corresponding VIR entry points are `CompiledAnimation.renderVirHTML`
+and `CompiledAnimation.renderVirRevealHTML`:
+
+```lean
+let html := compiled.renderVirHTML
+let revealSnippet := compiled.renderVirRevealHTML "#animation"
+```
+
+These players preserve the compact animation data and SVG patch
+format, but run frame timing, steps, pauses, loops, segment selection,
+and parameter decisions in Lean. Reveal remains a narrow JavaScript
+adapter: it forwards fragment indices and slide changes to the same
+Lean player used by the standalone page and infoview.
+
+The HTML players expect the VIR SDK and Illuminate animation package
+set under `./vir/` by default. The set consists of a descriptor, the
+root package, and dependency members under `Vir.parts/`. The infoview
+reads the same build artifacts through a restricted Lean server RPC.
+This repository uses a private linked checkout at `vir`; build the
+widget bundle and stage its matching runtime and package set with:
+
+```sh
+npm run stage:vir
+```
+
+Differential tests can additionally use a self-contained FIR-native
+Wasm package. Copy a tested package to the ignored `native-player/`
+directory, or set `ILLUMINATE_NATIVE_PLAYER_DIR` to its immutable
+package directory, then stage both runtimes and compare all three
+implementations:
+
+```sh
+npm run stage:players
+npm run test:player-traces
+```
+
+That v2 native package owns its memory, has no imports, and exports
+the real `AnimationPlayer.replayTrace` entry over the compact,
+SVG-free `PlayerAnimation` representation. It remains a
+differential-test backend because it accepts an entire event trace per
+call. The separately staged v4 selection package retains the compact
+timeline and state behind a persistent player handle, bounds
+per-dispatch scratch with a rewindable checkpoint, and supplies the
+live dashboard backend described below. The v3 full-action package is
+kept as a performance baseline.
+
+`VirPlayerAssets` customizes the runtime module, Wasm, and package-set
+descriptor URLs when embedding an HTML player elsewhere. Multiple
+Reveal animations using the same assets share one VIR runtime but keep
+independent `PlayerHandle`s. Each mount owns its animation-frame
+callback and DOM listeners; the host calls `disposePlayer` to cancel
+them and release the handle. JavaScript remains the runtime loader and
+typed DOM host, while `AnimationPlayer` holds the reusable pure state
+machine. The older JavaScript players remain useful as
+differential-test oracles during the port.
+
+The exact compatibility contract and intentional input-validation
+differences are tracked in
+[PLAYER_JS_COMPATIBILITY.md](PLAYER_JS_COMPATIBILITY.md). Instructions
+and validation requirements for regenerating the compact native
+package are in
+[FIR_PLAYER_REGENERATION.md](FIR_PLAYER_REGENERATION.md). The current
+VIR package and browser measurements are recorded in
+[PLAYER_PREPARATION_REPORT.md](PLAYER_PREPARATION_REPORT.md), with the
+latest VIR main and retained-callback phase results in
+[VIR_ILLUMINATE_PHASE_TIMING_REPORT.md](VIR_ILLUMINATE_PHASE_TIMING_REPORT.md).
+
+For a more visual comparison, the test suite generates a dashboard
+containing all of the `#animate` examples twice: once with the legacy
+JavaScript player and once with a selectable Lean runtime. VIR remains
+the default, while an accepted persistent FIR package is discovered
+under `test_output/fir-live`. Both columns receive the same controls
+and report rolling callback FPS, main-thread time, callback
+percentiles, long frames, and aggregate CPU estimates. Enable
+**Runtime phase timing** to split the Lean callback into input
+encoding, execution, decoding, reclamation, host rendering, and outer
+overhead. FIR additionally reports one-time creation and persistent
+memory. This diagnostic observer has measurable overhead and is
+intentionally off by default:
+
+```sh
+npm run demo:comparison
+```
+
+Then open <http://127.0.0.1:8765/anim-comparison.html>. The figures
+include the player callback, runtime work, and DOM updates, but not
+browser painting, so they are best read as a local side-by-side
+diagnostic rather than a portable benchmark.
+`renderAnimationComparisonHTML` can generate the same dashboard for
+another array of named compiled animations.
+
+The FIR selector is enabled only after an immutable persistent package
+passes the consumer acceptance gate and is staged separately from the
+whole-trace differential package:
+
+```sh
+ILLUMINATE_FIR_LIVE_PLAYER_DIR=/absolute/immutable/package \
+  npm run stage:fir-live
+```
+
+When a live package is available, passing the same environment
+variable to `npm run demo:comparison` stages it automatically.
+Core-only and DOM-inclusive measurements are written as structured
+JSON by:
+
+```sh
+ILLUMINATE_FIR_LIVE_PLAYER_DIR=/absolute/immutable/package \
+  npm run measure:fir-live
+npm run measure:live-dashboard
+```
+
+The older `npm run measure:fir-native` command remains the whole-trace
+baseline. Results, acceptance requirements, and the package contract
+are recorded in
+[FIR_NATIVE_PERFORMANCE_REPORT.md](FIR_NATIVE_PERFORMANCE_REPORT.md).
+
+The staged FIR backend uses the v4 selection boundary from
+`Illuminate.Animation.FirSelection`. It transfers only timeline bounds
+and steps into Wasm. SVG fragments, parameter bindings, and frame
+value strings remain in the browser, while Lean still selects the
+frame, step, segment, local frame, and playback state. The host
+materializes the selected patch row without reconstructing any timing
+or playback decision. The v2 whole-trace and v3 persistent packages
+remain useful as frozen performance baselines.
 
 ## Module Overview
 

@@ -13,10 +13,14 @@
         "anim_core.js",
         "anim_core.d.ts",
         "standalone.js",
+        "comparison.js",
+        "fir_live_player.js",
         "reveal.js",
+        "vir_reveal.js",
         "color_widget.js",
         "diagram_widget.js",
         "animate_widget.js",
+        "animate_vir_widget.js",
         "globals.d.ts",
         "infoview.d.ts"
     ]

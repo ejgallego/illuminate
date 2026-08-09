@@ -7,6 +7,8 @@ Author: David Thrane Christiansen
 import Lake
 open Lake DSL
 
+require lean_vir from "vir"
+
 package «illuminate» where
   leanOptions := #[⟨`autoImplicit, false⟩, ⟨`linter.missingDocs, true⟩, ⟨`doc.verso, true⟩]
 
