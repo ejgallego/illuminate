@@ -8,7 +8,7 @@ const e = React.createElement;
  * @typedef {{ kind: 'textInput', name: string, initial: string }} TextInputParam
  * @typedef {{ kind: 'checkbox', name: string, initial: boolean }} CheckboxParam
  * @typedef {SliderParam | TextInputParam | CheckboxParam} GadgetParam
- * @typedef {{ exprId: number, initialSvg: string, parameters: GadgetParam[] }} DiagramProps
+ * @typedef {{ exprId: number, initialSvg: string, initialHitScene: string, parameters: GadgetParam[] }} DiagramProps
  * @typedef {{ kind: string, value?: number, label?: string }} HitInfo
  * @typedef {(number | string | boolean)} ParamValue
  */
@@ -111,10 +111,12 @@ export default function (props) {
     var _svg = React.useState(props.initialSvg || "");
     var svg = _svg[0];
     var setSvg = _svg[1];
+    var latestHitScene = React.useRef(props.initialHitScene || "");
     // Reset SVG when switching to a different diagram
     React.useEffect(
         function () {
             setSvg(props.initialSvg || "");
+            latestHitScene.current = props.initialHitScene || "";
         },
         [props.exprId],
     );
@@ -170,8 +172,9 @@ export default function (props) {
                     values: latestValues.current,
                     pixelWidth: latestPixelWidth.current,
                 })
-                    .then(function (/** @type {{ svg: string }} */ resp) {
+                    .then(function (/** @type {{ svg: string, hitScene: string }} */ resp) {
                         setSvg(resp.svg);
+                        latestHitScene.current = resp.hitScene;
                     })
                     .catch(function (/** @type {unknown} */ err) {
                         console.error("RPC error:", err);
@@ -204,11 +207,10 @@ export default function (props) {
             var diagY = -svgY;
             if (hitTimer.current) clearTimeout(hitTimer.current);
             hitTimer.current = setTimeout(function () {
-                rs.call("Illuminate.hitTestDiagram", {
+                rs.call("Illuminate.hitTestPreparedDiagram", {
                     id: props.exprId,
                     x: diagX,
                     y: diagY,
-                    values: latestValues.current,
                 })
                     .then(function (/** @type {HitInfo} */ resp) {
                         setHitInfo(resp);

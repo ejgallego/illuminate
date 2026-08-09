@@ -70,25 +70,69 @@ private def pointOnStroke (pd : PathData) (strokeWidth : Float) (p : Point) : Bo
       | none => false
 
 /-!
-# Hit testing
+# Prepared primitives
 -/
 
-/--
-Tests whether a point lies inside a text bounding box, accounting for anchor alignment.
--/
-private def textContains (s : String) (style : TextStyle) (p : Point) : Bool :=
-  let fontSize := style.fontSize
-  let lines := s.splitOn "\n"
-  let nLines := Max.max 1 lines.length
-  let totalW := lines.foldl (fun acc line => Max.max acc (estimateTextWidth fontSize line)) 0
-  let h := if nLines == 1 then fontSize / 2
-           else fontSize * 1.2 * nLines.toFloat / 2
-  let hw := totalW / 2
-  let (left, right) : Float × Float := match style.anchor with
-    | .start => (0, totalW)
-    | .«end» => (-totalW, 0)
-    | .middle => (-hw, hw)
-  p.x >= left && p.x <= right && p.y >= -h && p.y <= h
+/-- Geometry retained from one primitive for browser-resident hit testing. -/
+inductive HitPrimitive where
+  /-- Tests a path's fill and visible stroke. -/
+  | path (data : PathData) (hasFill : Bool) (strokeWidth : Float)
+  /-- Tests an axis-aligned primitive bound. -/
+  | bounds (left right bottom top : Float)
+deriving Repr, BEq, Inhabited
+
+namespace HitPrimitive
+
+/-- Tests prepared primitive geometry at a point in the primitive's local coordinates. -/
+def hitTest (primitive : HitPrimitive) (p : Point) : Click :=
+  match primitive with
+  | .path data hasFill strokeWidth =>
+    let fillHit := hasFill && data.contains p
+    let strokeHit := pointOnStroke data strokeWidth p
+    if fillHit || strokeHit then .something else .nothing
+  | .bounds left right bottom top =>
+    if p.x >= left && p.x <= right && p.y >= bottom && p.y <= top then .something
+    else .nothing
+
+end HitPrimitive
+
+namespace CorePrimitive
+
+/-- Discards rendering-only data and prepares a primitive for repeated hit tests. -/
+def prepareHit : CorePrimitive → HitPrimitive
+  | .path data fill stroke =>
+    let hasFill := match fill with
+      | .none => false
+      | _ => true
+    let strokeWidth :=
+      if stroke.width > 0 && stroke.color.a > 0 then stroke.width else 0
+    .path data hasFill strokeWidth
+  | .text contents style =>
+    let fontSize := style.fontSize
+    let lines := contents.splitOn "\n"
+    let lineCount := Max.max 1 lines.length
+    let width := lines.foldl (fun acc line => Max.max acc (estimateTextWidth fontSize line)) 0
+    let halfHeight :=
+      if lineCount == 1 then fontSize / 2
+      else fontSize * 1.2 * lineCount.toFloat / 2
+    let (left, right) : Float × Float := match style.anchor with
+      | .start => (0, width)
+      | .«end» => (-width, 0)
+      | .middle => (-width / 2, width / 2)
+    .bounds left right (-halfHeight) halfHeight
+  | .styledText lines anchor =>
+    let (halfWidth, halfHeight) := styledTextTraceDims lines
+    let (left, right) : Float × Float := match anchor with
+      | .start => (0, halfWidth * 2)
+      | .«end» => (-(halfWidth * 2), 0)
+      | .middle => (-halfWidth, halfWidth)
+    .bounds left right (-halfHeight) halfHeight
+  | .image ref =>
+    let halfWidth := ref.width / 2
+    let halfHeight := ref.height / 2
+    .bounds (-halfWidth) halfWidth (-halfHeight) halfHeight
+
+end CorePrimitive
 
 namespace Diagram
 
@@ -108,30 +152,7 @@ Clicking within the border stroke of a shape counts as clicking the shape.
 def hitTest (d : Diagram β) (p : Point) : Click :=
   match d with
   | .empty => .nothing
-  | .prim cp =>
-    match cp with
-    | .path pd fill stroke =>
-      let fillHit := match fill with
-        | .none => false
-        | _ => pd.contains p
-      let strokeHit := stroke.width > 0 &&
-        stroke.color.a > 0 && pointOnStroke pd stroke.width p
-      if fillHit || strokeHit then .something else .nothing
-    | .text s style =>
-      if textContains s style p then .something else .nothing
-    | .styledText lines anchor =>
-      let (hw, hh) := styledTextTraceDims lines
-      let (left, right) : Float × Float := match anchor with
-        | .start => (0, hw * 2)
-        | .«end» => (-(hw * 2), 0)
-        | .middle => (-hw, hw)
-      if p.x >= left && p.x <= right && p.y >= -hh && p.y <= hh then .something
-      else .nothing
-    | .image ref =>
-      let hw := ref.width / 2
-      let hh := ref.height / 2
-      if p.x >= -hw && p.x <= hw && p.y >= -hh && p.y <= hh then .something
-      else .nothing
+  | .prim primitive => primitive.prepareHit.hitTest p
   | .foreign _ d => hitTest d p
   | .tag n d =>
     if (hitTest d p).isHit then .tag n else .nothing

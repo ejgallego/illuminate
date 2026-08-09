@@ -7,8 +7,8 @@ module
 public meta import Lean.Widget.UserWidget
 public import Illuminate.Backend.SVG
 import Illuminate.Diagram.Validate
-import Illuminate.Diagram.HitTest
-meta import Illuminate.Diagram.Types
+public import Illuminate.Diagram.HitScene
+public meta import Illuminate.Widget.Prepared
 public import Lean.Environment
 import Lean.DocString.Syntax
 public section
@@ -123,6 +123,8 @@ structure StoredDiagram where
   regions : Std.HashMap Nat String := {}
   /-- Whether the stored expression produces {name}`DiagramWithInfo` (after applying gadget values). -/
   returnsDwi : Bool := false
+  /-- Most recently rendered geometry used by the lightweight hit-test RPC fallback. -/
+  scene : IO.Ref HitScene
 
 /-- Global store for diagram expressions, keyed by unique ID. -/
 meta initialize diagramStore : IO.Ref (Array (Nat × StoredDiagram)) ← IO.mkRef #[]
@@ -144,6 +146,8 @@ deriving Lean.FromJson, Lean.ToJson
 meta structure EvalParamResponse where
   /-- The rendered SVG markup. -/
   svg : String
+  /-- Prepared hit scene matching the rendered diagram. -/
+  hitScene : String
 deriving Lean.FromJson, Lean.ToJson
 
 /-- Request to hit-test a diagram at a point. -/
@@ -156,6 +160,16 @@ meta structure HitTestRequest where
   y : Float
   /-- Current parameter values (for parameterized diagrams). -/
   values : Array Lean.Json := #[]
+deriving Lean.FromJson, Lean.ToJson
+
+/-- Request to hit-test the prepared geometry matching the currently rendered SVG. -/
+meta structure PreparedHitTestRequest where
+  /-- The unique ID of the stored diagram. -/
+  id : Nat
+  /-- X coordinate in diagram space. -/
+  x : Float
+  /-- Y coordinate in diagram space. -/
+  y : Float
 deriving Lean.FromJson, Lean.ToJson
 
 /-- Response from a hit test. -/
@@ -208,16 +222,24 @@ private meta unsafe def evalParamDiagramUnsafe (req : EvalParamRequest) :
     let app ← match applyGadgetValues sd req.values with
       | .ok e => pure e
       | .error msg => throw (.mk .invalidParams msg : RequestError)
-    let diagApp := if sd.returnsDwi
-      then mkApp (mkConst ``DiagramWithInfo.diagram) app else app
-    let svgExpr := mkApp (mkConst ``diagramToSvg) diagApp
     let ctx : Core.Context := { options := sd.opts, fileName := "<rpc>", fileMap := default }
     let st : Core.State := { env := sd.env }
-    let action : CoreM String := MetaM.run' (TermElabM.run' (do
-      evalExpr String (mkConst ``String) svgExpr (safety := .unsafe)))
+    let action : CoreM (Diagram SVG × Std.HashMap Nat String) :=
+      MetaM.run' (TermElabM.run' (do
+        if sd.returnsDwi then
+          let value ← evalExpr DiagramWithInfo (mkConst ``DiagramWithInfo) app
+            (safety := .unsafe)
+          pure (value.diagram, value.regions)
+        else
+          let diagramType ← Meta.mkAppM ``Diagram #[.const ``SVG []]
+          let value ← evalExpr (Diagram SVG) diagramType app (safety := .unsafe)
+          pure (value, sd.regions)))
     let evalResult ← (action.run ctx st).toBaseIO
     match evalResult with
-    | Except.ok (svg, _) => return ⟨svg⟩
+    | Except.ok ((diagram, regions), _) =>
+      let prepared := prepareWidgetDiagram diagram regions.toArray
+      sd.scene.set prepared.scene
+      return { svg := prepared.svg, hitScene := prepared.hitScene }
     | Except.error _ =>
       throw (.mk .internalError "diagram evaluation failed" : RequestError)
 
@@ -301,6 +323,21 @@ open Lean Server in
 meta def hitTestDiagram (req : HitTestRequest) :
     RequestM (RequestTask HitTestResponse) :=
   hitTestDiagramImpl req
+
+open Lean Server in
+/-- Server RPC method that hit-tests the geometry matching the currently rendered SVG. -/
+@[server_rpc_method]
+meta def hitTestPreparedDiagram (req : PreparedHitTestRequest) :
+    RequestM (RequestTask HitTestResponse) :=
+  RequestM.asTask do
+    let store ← diagramStore.get
+    let some (_, stored) := store.find? (fun (key, _) => key == req.id)
+      | throw (.mk .invalidParams "unknown diagram id" : RequestError)
+    let scene ← stored.scene.get
+    match scene.query req.x req.y with
+    | .nothing => return { kind := "nothing" }
+    | .something => return { kind := "something" }
+    | .tag value label => return { kind := "tag", value, label }
 
 /-!
 # Gadget extraction
@@ -439,12 +476,16 @@ meta unsafe def elabDiagramCmd : CommandElab := fun stx => do
     -- for static diagrams, store the projected diagram directly;
     -- for parameterized, store the original (RPC applies values then renders)
     let storedExpr := if gadgets.isEmpty then diagExpr else e
-    let sd : StoredDiagram := { env, opts, expr := storedExpr, gadgets, regions, returnsDwi }
+    let storedReturnsDwi := !gadgets.isEmpty && returnsDwi
+    let prepared := prepareWidgetDiagram dwi.diagram regions.toArray
+    let scene ← IO.mkRef prepared.scene
+    let sd : StoredDiagram := {
+      env, opts, expr := storedExpr, gadgets, regions, returnsDwi := storedReturnsDwi, scene
+    }
     diagramStore.modify (·.push (id, sd))
-    let svgStr ← evalExpr String (mkConst ``String)
-      (mkApp (mkConst ``diagramToSvg) diagExpr)
     let props : Json := .mkObj [
       ("exprId", toJson id),
-      ("initialSvg", .str svgStr),
+      ("initialSvg", .str prepared.svg),
+      ("initialHitScene", .str prepared.hitScene),
       ("parameters", .arr gadgets)]
     savePanelWidgetInfo diagramWidget.javascriptHash.val (pure props) stx
