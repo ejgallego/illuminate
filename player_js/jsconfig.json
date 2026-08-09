@@ -15,6 +15,8 @@
         "standalone.js",
         "comparison.js",
         "fir_live_player.js",
+        "fir_hit_scene.js",
+        "hit_scene_comparison.js",
         "reveal.js",
         "vir_reveal.js",
         "color_widget.js",
