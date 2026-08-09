@@ -1,24 +1,42 @@
 # FIR-native player performance and live integration handoff
 
+## FIR PR #2 merge dependency
+
+The corrected package depends on Illuminate commit
+`6f16cdc3d4320c093b53a9d381b92bfbb689b2ce`
+(`fix: preserve initial animation step`). It is reachable from the
+pushed branch `ejgallego/feat/vir-performance`, but is not yet
+reachable from `leanprover/illuminate` main or an upstream Illuminate
+pull request. It also cannot be landed as an isolated cherry-pick: the
+player source and differential runner it changes are introduced by
+earlier commits on the same animation-runtime branch.
+
+Therefore FIR PR #2 should remain blocked until the Illuminate runtime
+branch is submitted and landed, or until FIR records and checks out an
+explicit immutable Illuminate revision. After that, regenerate or
+ratchet the FIR package against the landed revision. In the FIR PR
+README, “v3 artifact is unchanged” should be replaced with “v3 API
+remains unchanged”; the closure hashes and Wasm size do change.
+
 ## Scope and accepted artifacts
 
 Illuminate now consumes two immutable FIR packages for different
 purposes:
 
-- the v2 `replayTrace` package remains the independent 106-trace
-  differential oracle;
+- the corrected v3 `initialLive`/`transitionLive` package supplies the
+  full-action FIR-native differential lane;
 - the v4 `initialSelectionLive`/`transitionSelectionLive` package is
   the persistent live player used by the comparison dashboard; and
-- the accepted v3 package remains a frozen full-action performance
-  baseline.
+- the historical v2 `replayTrace` package remains documented below,
+  but is no longer the staged live baseline.
 
 The accepted selection-player package is:
 
-- FIR functional commit: `eb6024e4425a86d7d5a8a060d037bc134896a881`;
-- immutable package: `eb6024e4425a-006dc1d1db18-3de20de4815a9e7bc26a`;
-- complete Wasm: 55,518 bytes;
+- FIR functional commit: `c797b6db8ef435cdb39a75e53f86e0b73048181f`;
+- immutable package: `c797b6db8ef4-b233ce7c2ad1-bb637ef4c2d757f68396`;
+- complete Wasm: 55,527 bytes;
 - Wasm SHA-256:
-  `0371d430f2b04dab6ad7e545c22aa591bb177fc853f366d77aeae8a4c3ac5474`;
+  `1c3064d4ee5b9ea0f96055b03e50e8477d29ce6f2313c23c9dcfc83d314eecd8`;
 - adapter: `fir.illuminate-player.browser/v4`;
 - input layout:
   `lean-4.32-Illuminate.Animation.SelectionAnimation/v4`;
@@ -33,7 +51,7 @@ by the consumer gate. Their SHA-256 values are:
 - `Types.lean`:
   `97a030fdd3ef718912479343cadf0131616a8a9b458901e963dc3709cf5633a3`;
 - `Player.lean`:
-  `3ed87ac8d6a21c0afb2b00efcde6f5390c47be336c09214c24ead847bdb4f306`;
+  `e1f98f9d02118f4b61a3f935dbdf49b1c3caf7c0b52aa0f80b7232fb740cd620`;
 - `FirLive.lean`:
   `941daf939d9faa966aa8fb848b4a8f7ce0525ba6420d3843067e2c97908e2121`;
 - `FirSelection.lean`:
@@ -79,13 +97,13 @@ VIR's. Browser timer granularity makes the individual sub-0.01 ms
 phase means directional; the Node medians are the stronger evidence
 for the boundary-cost reduction.
 
-Acceptance covered all 106 legacy/VIR-JSON/VIR-typed/FIR-native traces
-after host-side patch materialization, all six `PlayerEvent`
-constructors, bit-adjacent binary64 timestamps around 50 ms, both
-patch-target forms, concurrent players, cancellation and idempotent
-disposal, 10,000 exact checkpoint rewinds, zero Wasm imports, and the
-16-example dashboard. No adapter-side timing or playback translation
-was introduced.
+Acceptance covered all 107 legacy/VIR-JSON/VIR-typed/VIR-selection/
+FIR-native/FIR-selection traces after host-side patch materialization,
+all six `PlayerEvent` constructors, bit-adjacent binary64 timestamps
+around 50 ms, both patch-target forms, concurrent players,
+cancellation and idempotent disposal, 10,000 exact checkpoint rewinds,
+zero Wasm imports, and the 16-example dashboard. No adapter-side
+timing or playback translation was introduced.
 
 Reproduction:
 
@@ -98,6 +116,54 @@ ILLUMINATE_FIR_LIVE_PLAYER_DIR=/absolute/path/to/immutable/v4-package \
   npm run measure:fir-live
 npm run measure:live-dashboard
 ```
+
+## 2026-08-09 state-boundary follow-up for FIR maintainers
+
+Illuminate split v4 `decodeMs` in an instrumentation-only copy of the
+generated adapter. The probe preserved outputs across all 107 traces
+and was removed after measurement. On the two fixed workloads, the
+median decomposition was:
+
+| Subphase                     | Pause slide | Morphing loop | Share of decode |
+| ---------------------------- | ----------: | ------------: | --------------: |
+| Transition header/validation |     4.43 µs |       4.25 µs |          10–11% |
+| Selection/action decode      |     7.08 µs |       8.64 µs |          18–20% |
+| Returned `PlayerState` read  |    13.77 µs |      14.06 µs |          32–36% |
+| Persistent state-slot write  |     4.07 µs |       4.41 µs |       about 10% |
+| JavaScript result assembly   |     0.37 µs |       0.43 µs |        under 1% |
+
+The actionable result is that state read plus persistent-slot write
+accounts for 42–46% of `decodeMs`. JavaScript result allocation does
+not matter. A 4,000-tick interleaved experiment reused action fields
+while copying state. It reduced state-read median by 22% but reduced
+overall decode by only 2%, left wall time unchanged, and introduced an
+adapter-visible semantic invariant. Illuminate rejected that approach.
+
+The requested FIR design experiment is therefore a generated in-place
+resident state update, or an equivalent compact state/result ABI, that
+removes the returned general object-graph traversal. Please keep the
+pure structured transition and generic dispatch entry as the
+differential oracle. Illuminate should not add `Nat`/`UInt` conversion
+layers to obtain this result.
+
+The generation lane's provisional `dispatchTick(player, timestamp)` is
+independently promising. In eight balanced rounds of 240 samples per
+mode it preserved action digests, sent binary64 bits through an `i64`,
+and changed:
+
+```text
+pause slide:  wall 44.59 -> 42.54 µs; encode 7.07 -> 2.70 µs
+morph loop:   wall 40.36 -> 36.82 µs; encode 5.97 -> 2.17 µs
+scratch:      40 bytes / 1 allocation -> 0 bytes / 0 allocations
+```
+
+That is a 4.6–8.8% median wall improvement and a 62–64% event-encode
+improvement. It does not reduce state decode/synchronization. The
+measured package was intentionally not accepted because FIR reported
+`dirty: true`; its 56,156-byte Wasm SHA-256 was
+`8b13c8124ba7235e2a00cec154f42d406e6f568f071f51ec831bbb95486ae3f5`.
+Please publish a clean immutable package before Illuminate consumes
+this entry.
 
 ## Final v3 measurements
 

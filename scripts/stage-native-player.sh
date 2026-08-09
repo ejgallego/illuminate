@@ -6,6 +6,16 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 native_root="${ILLUMINATE_NATIVE_PLAYER_DIR:-$repo_root/native-player}"
 stage_root="$repo_root/test_output/native"
 
+if [ -L "$native_root" ]; then
+  echo "use an immutable FIR package directory, not a symlink" >&2
+  exit 1
+fi
+native_root="$(cd "$native_root" && pwd -P)"
+if [ "$(basename "$native_root")" = "illuminate-player-current" ]; then
+  echo "use an immutable FIR package directory, not illuminate-player-current" >&2
+  exit 1
+fi
+
 required=(
   BUILD.json
   SHA256SUMS
@@ -45,13 +55,21 @@ const module = new WebAssembly.Module(bytes);
 const expectedSources = new Map([
   [
     "src/Illuminate/Animation/Player.lean",
-    "3ed87ac8d6a21c0afb2b00efcde6f5390c47be336c09214c24ead847bdb4f306",
+    "e1f98f9d02118f4b61a3f935dbdf49b1c3caf7c0b52aa0f80b7232fb740cd620",
   ],
   [
     "src/Illuminate/Animation/Types.lean",
     "97a030fdd3ef718912479343cadf0131616a8a9b458901e963dc3709cf5633a3",
   ],
+  [
+    "src/Illuminate/Animation/FirLive.lean",
+    "941daf939d9faa966aa8fb848b4a8f7ce0525ba6420d3843067e2c97908e2121",
+  ],
 ]);
+assert.ok(
+  Array.isArray(build.sources?.illuminate?.relevantFiles),
+  "FIR package does not inventory its Illuminate source files",
+);
 for (const [source, expected] of expectedSources) {
   const actual = createHash("sha256")
     .update(await readFile(path.join(repoRoot, source)))
@@ -66,25 +84,35 @@ for (const [source, expected] of expectedSources) {
 assert.equal(build.schemaVersion, "fir.illuminate-player.build/v1");
 assert.equal(
   build.sources.fir.commit,
-  "658d36e6388197649da7a63198aec8454306727d",
+  "c797b6db8ef435cdb39a75e53f86e0b73048181f",
 );
-assert.equal(build.entry.sourceName, "Illuminate.AnimationPlayer.replayTrace");
-assert.equal(build.entry.exportName, "Illuminate.AnimationPlayer.replayTrace");
-assert.equal(build.entry.parameters[0].lean, "Illuminate.PlayerAnimation");
-assert.equal(build.entry.parameters[1].lean, "List PlayerEvent");
-assert.equal(build.entry.result.lean, "Except String (Array FrameAction)");
-assert.equal(descriptor.entry, build.entry.exportName);
-assert.equal(descriptor.sourceEntry, build.entry.sourceName);
-assert.deepEqual(descriptor.params, ["object", "tobject"]);
+assert.deepEqual(
+  build.entries.map(({ sourceName }) => sourceName),
+  [
+    "Illuminate.AnimationPlayer.initialLive",
+    "Illuminate.AnimationPlayer.transitionLive",
+  ],
+);
+assert.equal(build.entries[0].parameters[0].lean, "PlayerAnimation");
+assert.equal(build.entries[0].result.lean, "Except String LiveTransition");
+assert.equal(build.entries[1].parameters[0].lean, "PlayerAnimation");
+assert.equal(build.entries[1].parameters[1].lean, "PlayerState");
+assert.equal(build.entries[1].parameters[2].lean, "PlayerEvent");
+assert.equal(build.entries[1].result.lean, "LiveTransition");
+assert.equal(descriptor.entry, build.entries[0].exportName);
+assert.equal(descriptor.sourceEntry, build.entries[0].sourceName);
+assert.deepEqual(descriptor.params, ["object"]);
 assert.equal(descriptor.result, "object");
 assert.deepEqual(WebAssembly.Module.imports(module), []);
 const exports = WebAssembly.Module.exports(module);
 assert.deepEqual(
   exports.filter(({ kind }) => kind === "function").map(({ name }) => name).sort(),
   [
-    "Illuminate.AnimationPlayer.replayTrace",
+    "Illuminate.AnimationPlayer.initialLive",
+    "Illuminate.AnimationPlayer.transitionLive",
     "fir_heap_alloc",
     "fir_heap_frontier",
+    "fir_heap_rewind",
     "fir_heap_set_frontier",
   ].sort(),
 );
@@ -96,16 +124,16 @@ assert.equal(build.wasm.functionImportCount, 0);
 assert.equal(build.wasm.memoryImportCount, 0);
 assert.equal(build.wasm.memoryOwner, "module");
 assert.deepEqual(build.wasm.memoryExports, ["memory"]);
-assert.equal(build.wasm.functionExportCount, 4);
-assert.equal(build.wasm.byteLength, 50194);
+assert.equal(build.wasm.functionExportCount, 6);
+assert.equal(build.wasm.byteLength, 50211);
 assert.equal(
   build.wasm.sha256,
-  "3ec5485591b88397cc6b664894f343fc156ce50fb346f6b0c189cde0e50944c9",
+  "a4de0ec22d50c5070dbfa90969dc95c41be6f747955f60c8f9620baeafefbfa5",
 );
-assert.equal(build.wasm.base.byteLength, 18005);
+assert.equal(build.wasm.base.byteLength, 18911);
 assert.equal(
   build.wasm.base.sha256,
-  "2f26b90debd56473f7d30ec20903124fd7e625acf62c5e1d1cbb226e80b4aa62",
+  "61cc4efd3f4d637dcc63e25783f52a8d1680acb269f86f1d277470bbcf6e7cc4",
 );
 assert.equal(
   createHash("sha256").update(bytes).digest("hex"),
@@ -113,15 +141,15 @@ assert.equal(
 );
 assert.equal(
   build.capabilities.browserAdapter.apiVersion,
-  "fir.illuminate-player.browser/v2",
+  "fir.illuminate-player.browser/v3",
 );
 assert.equal(
   build.capabilities.inputLayout.version,
-  "lean-4.32-Illuminate.Animation.PlayerAnimation/v2",
+  "lean-4.32-Illuminate.Animation.PlayerAnimation-live/v3",
 );
 assert.equal(
   build.capabilities.ownership.version,
-  "fir.illuminate-player.module-owned-arena/v1",
+  "fir.illuminate-player.persistent-checkpoint/v2",
 );
 NODE
 

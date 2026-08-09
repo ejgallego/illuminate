@@ -99,7 +99,7 @@ const expectedSources = new Map([
     ],
     [
         "src/Illuminate/Animation/Player.lean",
-        "3ed87ac8d6a21c0afb2b00efcde6f5390c47be336c09214c24ead847bdb4f306",
+        "e1f98f9d02118f4b61a3f935dbdf49b1c3caf7c0b52aa0f80b7232fb740cd620",
     ],
     [
         "src/Illuminate/Animation/FirLive.lean",
