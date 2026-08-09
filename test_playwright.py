@@ -939,6 +939,7 @@ def test_animation_comparison_dashboard(page):
     assert "Detailed callback phases" in timing_label
     assert "adds measurement overhead" in timing_label
     assert page.locator(".phase-metric:visible").count() == 0
+    assert page.locator("[data-row-phase-comparison]:visible").count() == 0
     assert page.locator("[data-aggregate-phases]:visible").count() == 0
     fir_live_staged = (ROOT / "test_output" / "fir-live" / "BUILD.json").exists()
     assert page.locator('#comparison-backend option[value="fir"]').evaluate(
@@ -975,7 +976,8 @@ def test_animation_comparison_dashboard(page):
     ) > 0
     page.locator("#comparison-vir-timing").check()
     assert page.locator("#comparison-vir-timing").get_attribute("aria-expanded") == "true"
-    assert page.locator(".phase-metric:visible").count() == 32
+    assert page.locator(".phase-metric:visible").count() == 0
+    assert page.locator("[data-row-phase-comparison]:visible").count() == 16
     assert page.locator("[data-aggregate-phases]:visible").count() == 1
     page.wait_for_function(
         """() => [...document.querySelectorAll('[data-phase-count]')]
@@ -986,7 +988,7 @@ def test_animation_comparison_dashboard(page):
     assert len(phase_values) == 16 * 2 * 8
     assert all(float(value.split()[0]) >= 0 for value in phase_values)
     assert page.locator("[data-aggregate-phase-group]").count() == 7
-    assert page.locator(".aggregate-phase-column").count() == 14
+    assert page.locator("[data-aggregate-phases] .aggregate-phase-column").count() == 14
     assert page.evaluate(
         """() => [...document.querySelectorAll('[data-aggregate-phase-group]')]
             .every(group => group.querySelectorAll('[data-aggregate-phase-value]').length === 2)"""
@@ -1009,6 +1011,25 @@ def test_animation_comparison_dashboard(page):
     assert page.evaluate(
         """() => [...document.querySelectorAll(
             '[data-aggregate-phase-group="callback"] [data-aggregate-phase-fill]'
+          )].every(node => Number.parseFloat(node.style.height || '0') > 0)"""
+    )
+    assert page.locator("[data-row-phase-group]").count() == 16 * 7
+    assert page.locator("[data-row-phase-comparison] .aggregate-phase-column").count() == 16 * 14
+    assert page.evaluate(
+        """() => [...document.querySelectorAll('[data-row-phase-comparison]')]
+            .every(chart =>
+              chart.querySelectorAll('[data-row-phase-group]').length === 7 &&
+              [...chart.querySelectorAll('[data-row-phase-group]')].every(group =>
+                group.querySelectorAll('[data-row-phase-value]').length === 2))"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-row-phase-group="execute"] [data-row-phase-value]'
+          )].every(node => Number.parseFloat(node.textContent || '0') > 0)"""
+    )
+    assert page.evaluate(
+        """() => [...document.querySelectorAll(
+            '[data-row-phase-group="execute"] [data-row-phase-fill]'
           )].every(node => Number.parseFloat(node.style.height || '0') > 0)"""
     )
     assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
@@ -1073,6 +1094,7 @@ def test_animation_comparison_dashboard(page):
     page.locator("#comparison-vir-timing").uncheck()
     assert page.locator("#comparison-vir-timing").get_attribute("aria-expanded") == "false"
     assert page.locator(".phase-metric:visible").count() == 0
+    assert page.locator("[data-row-phase-comparison]:visible").count() == 0
     assert page.locator("[data-aggregate-phases]:visible").count() == 0
     assert errors == []
 

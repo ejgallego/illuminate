@@ -677,24 +677,16 @@
      * @param {PhaseAggregate} candidatePhases
      * @param {number} jsCallbackMs
      * @param {number} candidateCallbackMs
-     * @param {boolean} enabled
      * @param {"vir-selection" | "vir-full" | "fir"} engine
      */
-    function renderAggregatePhases(
+    function pairedPhaseDefinitions(
         jsPhases,
         candidatePhases,
         jsCallbackMs,
         candidateCallbackMs,
-        enabled,
         engine,
     ) {
-        var target = /** @type {HTMLElement | null} */ (
-            document.querySelector("[data-aggregate-phases]")
-        );
-        if (!target) return;
-        target.hidden = !enabled;
-        if (!enabled) return;
-        var definitions = [
+        return [
             {
                 key: "callback",
                 label: "whole callback",
@@ -738,17 +730,25 @@
                 candidate: candidatePhases.adapterMs,
             },
         ];
+    }
+
+    /**
+     * @param {HTMLElement} target
+     * @param {ReturnType<typeof pairedPhaseDefinitions>} definitions
+     * @param {"aggregate" | "row"} scope
+     */
+    function renderPairedPhaseBars(target, definitions, scope) {
         var scale = 0;
         for (var definition of definitions) {
             scale = Math.max(scale, definition.js, definition.candidate);
         }
         scale = Math.max(scale, 0.000001);
         for (var definition of definitions) {
-            var group = document.querySelector(
-                '[data-aggregate-phase-group="' + definition.key + '"]',
+            var group = target.querySelector(
+                "[data-" + scope + '-phase-group="' + definition.key + '"]',
             );
             if (!(group instanceof HTMLElement)) continue;
-            var label = group.querySelector("[data-aggregate-phase-label]");
+            var label = group.querySelector("[data-" + scope + "-phase-label]");
             if (label) label.textContent = definition.label;
             for (var pair of [
                 ["js", definition.js],
@@ -756,9 +756,11 @@
             ]) {
                 var owner = String(pair[0]);
                 var value = Number(pair[1]);
-                var output = group.querySelector('[data-aggregate-phase-value="' + owner + '"]');
+                var output = group.querySelector(
+                    "[data-" + scope + '-phase-value="' + owner + '"]',
+                );
                 var fill = /** @type {HTMLElement | null} */ (
-                    group.querySelector('[data-aggregate-phase-fill="' + owner + '"]')
+                    group.querySelector("[data-" + scope + '-phase-fill="' + owner + '"]')
                 );
                 if (output) output.textContent = formatNumber(value, 3);
                 if (fill) {
@@ -767,12 +769,87 @@
                 }
             }
         }
+    }
+
+    /**
+     * @param {PhaseAggregate} jsPhases
+     * @param {PhaseAggregate} candidatePhases
+     * @param {number} jsCallbackMs
+     * @param {number} candidateCallbackMs
+     * @param {boolean} enabled
+     * @param {"vir-selection" | "vir-full" | "fir"} engine
+     */
+    function renderAggregatePhases(
+        jsPhases,
+        candidatePhases,
+        jsCallbackMs,
+        candidateCallbackMs,
+        enabled,
+        engine,
+    ) {
+        var target = /** @type {HTMLElement | null} */ (
+            document.querySelector("[data-aggregate-phases]")
+        );
+        if (!target) return;
+        target.hidden = !enabled;
+        if (!enabled) return;
+        renderPairedPhaseBars(
+            target,
+            pairedPhaseDefinitions(
+                jsPhases,
+                candidatePhases,
+                jsCallbackMs,
+                candidateCallbackMs,
+                engine,
+            ),
+            "aggregate",
+        );
         var note = target.querySelector("[data-aggregate-phase-note]");
         if (note) {
             note.textContent =
                 engine === "vir-full"
                     ? "Paired bars share one linear millisecond scale. Full VIR host time is nested inside execute; phases are not additive."
                     : "Paired bars share one linear millisecond scale; independently timed phases are not stacked.";
+        }
+    }
+
+    /**
+     * @param {HTMLElement} target
+     * @param {PhaseAggregate} jsPhases
+     * @param {PhaseAggregate} candidatePhases
+     * @param {number} jsCallbackMs
+     * @param {number} candidateCallbackMs
+     * @param {boolean} enabled
+     * @param {"vir-selection" | "vir-full" | "fir"} engine
+     */
+    function renderRowPhaseComparison(
+        target,
+        jsPhases,
+        candidatePhases,
+        jsCallbackMs,
+        candidateCallbackMs,
+        enabled,
+        engine,
+    ) {
+        target.hidden = !enabled;
+        if (!enabled) return;
+        renderPairedPhaseBars(
+            target,
+            pairedPhaseDefinitions(
+                jsPhases,
+                candidatePhases,
+                jsCallbackMs,
+                candidateCallbackMs,
+                engine,
+            ),
+            "row",
+        );
+        var note = target.querySelector("[data-row-phase-note]");
+        if (note) {
+            note.textContent =
+                engine === "vir-full"
+                    ? "One scale for this example. Full VIR host time is nested inside execute; phases are not additive."
+                    : "One scale for this example; paired bars are rolling means and phases are not stacked.";
         }
     }
 
@@ -900,6 +977,33 @@
         );
     }
 
+    /** @param {string} key @param {string} label */
+    function rowPhaseGroupMarkup(key, label) {
+        return (
+            '<div class="aggregate-phase-group" data-row-phase-group="' +
+            key +
+            '"><div class="aggregate-phase-bars"><span class="aggregate-phase-column js"><output data-row-phase-value="js">0.000</output><i data-row-phase-fill="js"></i></span><span class="aggregate-phase-column candidate" data-row-phase-candidate-column><output data-row-phase-value="candidate">0.000</output><i data-row-phase-fill="candidate"></i></span></div><span class="aggregate-phase-label" data-row-phase-label>' +
+            label +
+            "</span></div>"
+        );
+    }
+
+    function rowPhaseComparisonMarkup() {
+        return (
+            '<section class="row-phase-comparison" data-row-phase-comparison hidden>' +
+            '<div class="aggregate-phase-head"><div><strong>Paired detailed callback phases</strong><p data-row-phase-note>One scale for this example; paired bars are rolling means and phases are not stacked.</p></div><div class="aggregate-phase-legend"><span><i class="js"></i>JavaScript</span><span><i class="candidate" data-row-candidate-legend></i><span data-candidate-name>Lean · VIR selection</span></span></div></div>' +
+            '<div class="aggregate-phase-chart">' +
+            rowPhaseGroupMarkup("callback", "whole callback") +
+            rowPhaseGroupMarkup("marshal", "input boundary") +
+            rowPhaseGroupMarkup("execute", "execute") +
+            rowPhaseGroupMarkup("decode", "decode") +
+            rowPhaseGroupMarkup("rewind", "rewind") +
+            rowPhaseGroupMarkup("host", "DOM apply") +
+            rowPhaseGroupMarkup("adapter", "outer gap") +
+            "</div></section>"
+        );
+    }
+
     var status = document.getElementById("comparison-status");
     var grid = document.getElementById("comparison-grid");
     if (!(status instanceof HTMLElement) || !(grid instanceof HTMLElement)) {
@@ -931,6 +1035,7 @@
                 '<div class="overhead-ratio" data-overhead-ratio data-overhead-state="waiting"><div><strong data-overhead-value>—</strong><small>whole callback / paired JavaScript</small></div><output data-overhead-detail>waiting for paired callbacks</output><span class="overhead-track"><i data-overhead-fill></i><b title="JavaScript baseline"></b></span></div>' +
                 phaseMarkup("candidate") +
                 "</section></div>" +
+                rowPhaseComparisonMarkup() +
                 '<footer><button type="button" data-action="advance">Play / pause / advance</button>' +
                 '<button type="button" class="quiet" data-action="reset">Reset</button>' +
                 '<input type="range" min="0" value="0" aria-label="Shared animation frame">' +
@@ -1006,7 +1111,10 @@
             );
             virTiming.setAttribute("aria-expanded", String(virTiming.checked));
             for (var panel of document.querySelectorAll(".phase-metric")) {
-                if (panel instanceof HTMLElement) panel.hidden = !virTiming.checked;
+                if (panel instanceof HTMLElement) panel.hidden = true;
+            }
+            for (var comparison of document.querySelectorAll("[data-row-phase-comparison]")) {
+                if (comparison instanceof HTMLElement) comparison.hidden = !virTiming.checked;
             }
             var aggregatePhases = /** @type {HTMLElement | null} */ (
                 document.querySelector("[data-aggregate-phases]")
@@ -1150,7 +1258,7 @@
             summaryDot?.classList.toggle("vir", currentBackend !== "fir");
             summaryDot?.classList.toggle("fir", currentBackend === "fir");
             for (var candidateVisual of document.querySelectorAll(
-                '[data-aggregate-cpu-fill="candidate"], [data-aggregate-candidate-legend], [data-aggregate-phase-candidate-column]',
+                '[data-aggregate-cpu-fill="candidate"], [data-aggregate-candidate-legend], [data-aggregate-phase-candidate-column], [data-row-candidate-legend], [data-row-phase-candidate-column]',
             )) {
                 candidateVisual.classList.toggle("fir", currentBackend === "fir");
             }
@@ -1310,6 +1418,17 @@
                 renderPhaseMetric(
                     /** @type {HTMLElement} */ (article.querySelector("[data-candidate-phases]")),
                     candidatePhases,
+                    virTiming.checked,
+                    currentBackend,
+                );
+                renderRowPhaseComparison(
+                    /** @type {HTMLElement} */ (
+                        article.querySelector("[data-row-phase-comparison]")
+                    ),
+                    jsPhases,
+                    candidatePhases,
+                    jsMetric.mean,
+                    candidateMetric.mean,
                     virTiming.checked,
                     currentBackend,
                 );

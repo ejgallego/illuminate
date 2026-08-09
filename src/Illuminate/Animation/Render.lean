@@ -302,7 +302,10 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .aggregate-cpu-track .candidate \{ background: #668fff; }
 .aggregate-cpu-track .candidate.fir \{ background: #5bd6aa; }
 .aggregate-phases \{ grid-column: 1 / -1; padding-top: 16px; border-top: 1px solid #263453; }
-.aggregate-phases[hidden], .phase-metric[hidden] \{ display: none; }
+.aggregate-phases[hidden], .row-phase-comparison[hidden], .phase-metric[hidden] \{ display: none; }
+.row-phase-comparison \{ padding: 16px 20px 18px; background: #10182b; border-top: 1px solid #263453; }
+.row-phase-comparison .aggregate-phase-head strong \{ color: #dce5ff; font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+.row-phase-comparison .aggregate-phase-head p \{ margin: 3px 0 0; color: #8292b3; font-size: 9px; }
 .aggregate-phase-head \{ display: flex; gap: 14px; align-items: end; justify-content: space-between; }
 .aggregate-phase-legend \{ display: flex; gap: 12px; color: #98a8c8; font-size: 9px; }
 .aggregate-phase-legend span \{ display: inline-flex; gap: 5px; align-items: center; }
@@ -312,7 +315,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .aggregate-phase-legend .candidate.fir \{ background: #5bd6aa; }
 .aggregate-phase-chart \{ display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .aggregate-phase-group \{ display: grid; grid-template-rows: 128px auto; gap: 7px; min-width: 0; }
-.aggregate-phase-group[data-aggregate-phase-group=\"callback\"] \{ padding: 6px; background: #151f37; border: 1px solid #344362; border-radius: 8px; }
+.aggregate-phase-group[data-aggregate-phase-group=\"callback\"], .aggregate-phase-group[data-row-phase-group=\"callback\"] \{ padding: 6px; background: #151f37; border: 1px solid #344362; border-radius: 8px; }
 .aggregate-phase-bars \{ display: flex; gap: 6px; align-items: end; justify-content: center; padding: 0 5px 1px; border-bottom: 1px solid #344362; }
 .aggregate-phase-column \{ display: flex; flex-direction: column; gap: 4px; align-items: center; justify-content: end; width: min(38%, 42px); height: 100%; }
 .aggregate-phase-column output \{ color: #b7c3dc; font: 8px ui-monospace, monospace; white-space: nowrap; }
