@@ -277,6 +277,15 @@ function animation(totalFrames, steps, segments = [segment(0, totalFrames)]) {
 
 const cases = [
     {
+        name: "duplicate frame-zero initialization",
+        data: animation(10, [
+            { frame: 0, pause: true, loop: false },
+            { frame: 0, pause: false, loop: false },
+            { frame: 5, pause: true, loop: false },
+        ]),
+        events: [],
+    },
+    {
         name: "exact pause boundary",
         data: animation(12, [
             { frame: 0, pause: false, loop: false },

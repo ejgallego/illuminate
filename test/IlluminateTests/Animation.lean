@@ -92,6 +92,15 @@ def playerTests : List (String × IO Unit) :=
       let fast := transitionPrepared prepared fastInitial.state event
       let wrapped ← expectTransition (transition animation wrappedInitial.state event)
       assertTrue (fast == wrapped) "transition paths agree")
+  , ("player: initialization preserves the first duplicate frame-zero step", do
+      let animation := playerAnimation 10 #[
+        { frame := 0, pause := true, loop := false },
+        { frame := 0, pause := false, loop := false },
+        { frame := 5, pause := true, loop := false }
+      ]
+      let initial ← expectTransition (initialTransition animation)
+      assertTrue (initial.state.step == 0) "initial state selects the first step"
+      assertTrue (initial.action.step == 0) "initial action selects the first step")
   , ("player: prepared trace entry returns one action per boundary", do
       let animation := playerAnimation 10 #[{ frame := 0, pause := false, loop := false }]
       let prepared ← expectPrepared (prepare animation)

@@ -338,7 +338,7 @@ private def actionAt
 
 /-- Initializes a prepared animation and selects its first frame without revalidation. -/
 def initialPrepared (animation : PlayerAnimation) : Transition :=
-  let state : PlayerState := { step := findCurrentStep animation.steps 0 }
+  let state : PlayerState := { step := 0 }
   actionAt animation state 0
 
 /-- Validates a compiled animation and selects its first frame. -/
