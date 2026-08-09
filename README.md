@@ -589,7 +589,9 @@ value strings remain in the browser, while Lean still selects the
 frame, step, segment, local frame, and playback state. The host
 materializes the selected patch row without reconstructing any timing
 or playback decision. The v2 whole-trace and v3 persistent packages
-remain useful as frozen performance baselines.
+remain useful as frozen performance baselines. The matched JavaScript,
+FIR, and current VIR boundary comparison is recorded in
+[PLAYER_SELECTION_BOUNDARY_REPORT.md](PLAYER_SELECTION_BOUNDARY_REPORT.md).
 
 ## Module Overview
 

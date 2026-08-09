@@ -954,7 +954,7 @@ def test_animation_comparison_dashboard(page):
         timeout=10_000,
     )
     phase_values = page.locator("[data-phase]").all_inner_texts()
-    assert len(phase_values) == 16 * 8
+    assert len(phase_values) == 16 * 2 * 8
     assert all(float(value.split()[0]) >= 0 for value in phase_values)
     assert page.evaluate(
         """() => [...document.querySelectorAll('[data-candidate-phases]')].every(panel =>

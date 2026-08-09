@@ -36,7 +36,7 @@ interface FirComparisonRenderer {
     dispose?(): void;
 }
 
-declare function createFirSelectionDomRenderer(
+declare function createSelectionDomRenderer(
     animation: AnimData,
     container: HTMLElement,
 ): FirComparisonRenderer;

@@ -146,7 +146,7 @@ export function createFirDomRenderer(animation, container) {
  * @param {HTMLElement} container
  * @returns {FirSelectionRenderer}
  */
-export function createFirSelectionDomRenderer(animation, container) {
+export function createSelectionDomRenderer(animation, container) {
     /** @type {number | null} */
     let installedSegment = null;
     /** @type {Element[]} */
@@ -193,6 +193,9 @@ export function createFirSelectionDomRenderer(animation, container) {
         },
     };
 }
+
+/** Backwards-compatible name for the shared JavaScript-object selection renderer. */
+export const createFirSelectionDomRenderer = createSelectionDomRenderer;
 
 /**
  * Owns browser callback scheduling around a persistent FIR player handle.

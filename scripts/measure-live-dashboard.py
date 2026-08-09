@@ -8,6 +8,7 @@ import argparse
 import json
 import platform
 import shutil
+import statistics
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -63,13 +64,72 @@ def measure_backend(page, backend: str, duration_ms: int):
     }
 
 
+def mean_row_field(observation, result_field: str, value_field: str):
+    """Averages one callback or phase field across active dashboard rows."""
+    values = [
+        row[result_field][value_field]
+        for row in observation["snapshot"]["rows"]
+        if row[result_field] is not None
+    ]
+    return statistics.mean(values)
+
+
+def summarize_backend(observations, backend: str):
+    """Takes medians of per-run row means for one candidate backend."""
+    selected = [
+        observation
+        for observation in observations
+        if observation["backend"] == backend
+    ]
+    if not selected:
+        return None
+    phase_fields = (
+        "marshalMs",
+        "executeMs",
+        "decodeMs",
+        "rewindMs",
+        "hostMs",
+        "totalMs",
+        "adapterMs",
+    )
+    return {
+        "runs": len(selected),
+        "minimumDomMatches": min(observation["domMatches"] for observation in selected),
+        "rowCount": selected[0]["rowCount"],
+        "jsCallbackMeanMs": statistics.median(
+            mean_row_field(observation, "jsCallback", "mean")
+            for observation in selected
+        ),
+        "candidateCallbackMeanMs": statistics.median(
+            mean_row_field(observation, "callback", "mean")
+            for observation in selected
+        ),
+        "jsPhases": {
+            field: statistics.median(
+                mean_row_field(observation, "jsPhases", field)
+                for observation in selected
+            )
+            for field in phase_fields
+        },
+        "candidatePhases": {
+            field: statistics.median(
+                mean_row_field(observation, "phases", field)
+                for observation in selected
+            )
+            for field in phase_fields
+        },
+    }
+
+
 def main():
     """Runs the browser benchmark and writes its structured report."""
     parser = argparse.ArgumentParser()
     parser.add_argument("--duration-ms", type=int, default=5000)
+    parser.add_argument("--runs", type=int, default=3)
     parser.add_argument("--allow-vir-only", action="store_true")
     args = parser.parse_args()
     assert args.duration_ms >= 2000, "duration must cover the dashboard's rolling window"
+    assert args.runs > 0, "runs must be positive"
 
     html = OUTPUT / "anim-comparison.html"
     assert html.exists(), "run lake test --wfail to generate anim-comparison.html"
@@ -85,20 +145,37 @@ def main():
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, **chromium_options())
-            page = browser.new_page()
-            page.on("pageerror", lambda error: errors.append(str(error)))
-            page.goto(f"http://127.0.0.1:{server.server_address[1]}/{html.name}")
-            page.wait_for_function("document.body.dataset.ready === 'true'", timeout=60_000)
-            page.locator("#comparison-vir-timing").check()
-            fir_available = not page.locator(
-                '#comparison-backend option[value="fir"]'
-            ).is_disabled()
-            if not args.allow_vir_only:
-                assert fir_available, "staged FIR package was rejected by the dashboard loader"
-
-            observations = [measure_backend(page, "vir", args.duration_ms)]
-            if fir_available:
-                observations.append(measure_backend(page, "fir", args.duration_ms))
+            observations = []
+            url = f"http://127.0.0.1:{server.server_address[1]}/{html.name}"
+            for round_index in range(args.runs):
+                order = ["vir", "fir"] if round_index % 2 == 0 else ["fir", "vir"]
+                if args.allow_vir_only and not fir_build.exists():
+                    order = ["vir"]
+                for backend in order:
+                    context = browser.new_context()
+                    try:
+                        page = context.new_page()
+                        page.on("pageerror", lambda error: errors.append(str(error)))
+                        page.goto(url)
+                        page.wait_for_function(
+                            "document.body.dataset.ready === 'true'", timeout=60_000
+                        )
+                        page.locator("#comparison-vir-timing").check()
+                        fir_available = not page.locator(
+                            '#comparison-backend option[value="fir"]'
+                        ).is_disabled()
+                        if not args.allow_vir_only:
+                            assert fir_available, (
+                                "staged FIR package was rejected by the dashboard loader"
+                            )
+                        if backend == "fir" and not fir_available:
+                            continue
+                        observation = measure_backend(page, backend, args.duration_ms)
+                        observation["round"] = round_index
+                        observation["order"] = order
+                        observations.append(observation)
+                    finally:
+                        context.close()
             browser.close()
     finally:
         server.shutdown()
@@ -107,14 +184,21 @@ def main():
 
     assert errors == [], f"dashboard page errors: {errors}"
     build = json.loads(fir_build.read_text()) if fir_build.exists() else None
+    summaries = {
+        backend: summary
+        for backend in ("vir", "fir")
+        if (summary := summarize_backend(observations, backend)) is not None
+    }
     report = {
-        "schema": "illuminate.live-dashboard-phases/v1",
+        "schema": "illuminate.live-dashboard-phases/v2",
         "generatedAtUnix": time(),
         "scope": {
             "domIncluded": True,
             "paintAndCompositingIncluded": False,
             "timestampPolicy": "independent browser requestAnimationFrame callbacks",
             "rollingWindowMs": 2000,
+            "sharedJsFirRenderer": True,
+            "jsInput": "original JavaScript AnimData object without conversion",
         },
         "identity": {
             "platform": platform.platform(),
@@ -129,22 +213,23 @@ def main():
             if build
             else None,
         },
-        "policy": {"durationMs": args.duration_ms},
+        "policy": {
+            "durationMs": args.duration_ms,
+            "runs": args.runs,
+            "freshBrowserContextPerObservation": True,
+            "balancedBackendOrder": True,
+        },
         "observations": observations,
+        "summaries": summaries,
     }
     report_path = OUTPUT / "perf" / "live-dashboard-phases.json"
     report_path.parent.mkdir(parents=True, exist_ok=True)
     report_path.write_text(json.dumps(report, indent=2) + "\n")
-    for observation in observations:
-        means = [
-            row["callback"]["mean"]
-            for row in observation["snapshot"]["rows"]
-            if row["callback"] is not None
-        ]
-        mean = sum(means) / len(means) if means else 0
+    for backend, summary in summaries.items():
         print(
-            f"{observation['backend'].upper()}: {observation['domMatches']}/"
-            f"{observation['rowCount']} DOM matches, mean callback {mean:.3f} ms"
+            f"{backend.upper()}: {summary['minimumDomMatches']}/{summary['rowCount']} "
+            f"DOM matches, median JS {summary['jsCallbackMeanMs']:.3f} ms, "
+            f"candidate {summary['candidateCallbackMeanMs']:.3f} ms"
         )
     print(f"wrote {report_path}")
 

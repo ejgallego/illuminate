@@ -18,12 +18,15 @@
  *   hostMs: number,
  *   totalMs: number
  * }} RuntimeCallTimings
+ * @typedef {"paused" | "playing" | "waiting" | "looping" | "finishingLoop" | "finished"} ComparisonPlaybackStatus
+ * @typedef {{ frame: number, step: number, segment: number, localFrame: number, segmentChanged: boolean, playback: ComparisonPlaybackStatus }} ComparisonFrameSelection
  * @typedef {RuntimeCallTimings & {
  *   time: number,
  *   rewindMs: number,
  *   scratchBytes: number
  * }} RuntimePhaseSample
  * @typedef {{ totalMs: number, projectMs: number, encodeMs: number, persistentBytes: number }} CreationSample
+ * @typedef {(timings: RuntimeCallTimings) => void} JsSelectionObserver
  * @typedef {{
  *   owner: string,
  *   engine: "js" | "vir" | "fir",
@@ -153,6 +156,25 @@
         pruneSamples(value, now);
     }
 
+    /** @param {RuntimeCallTimings} timings */
+    function recordJsSelectionTiming(timings) {
+        if (currentOwner === null) return;
+        var value = metrics.get(currentOwner);
+        if (!value || value.engine !== "js") return;
+        var now = performance.now();
+        value.phaseSamples.push({
+            time: now,
+            marshalMs: 0,
+            executeMs: timings.executeMs,
+            decodeMs: 0,
+            hostMs: timings.hostMs,
+            totalMs: timings.totalMs,
+            rewindMs: 0,
+            scratchBytes: 0,
+        });
+        pruneSamples(value, now);
+    }
+
     /** @param {ComparisonFirObservation} observation */
     function recordFirObservation(observation) {
         if (currentOwner === null) return;
@@ -217,10 +239,16 @@
         nativeCancelAnimationFrame(handle);
     };
 
-    /** @param {AnimData} data @param {HTMLElement} container @returns {LegacyPlayer} */
-    function mountLegacy(data, container) {
-        /** @type {Segment | null} */
-        var currentSegment = null;
+    /**
+     * @param {AnimData} data
+     * @param {HTMLElement} container
+     * @param {JsSelectionObserver | null} observer
+     * @param {(() => boolean) | null} observeTick
+     * @returns {LegacyPlayer}
+     */
+    function mountLegacy(data, container, observer = null, observeTick = null) {
+        var currentSegment = -1;
+        var renderer = createSelectionDomRenderer(data, container);
         var playing = false;
         /** @type {number | null} */
         var startTime = null;
@@ -233,17 +261,45 @@
         var pendingFrame = null;
         var disposed = false;
 
-        /** @param {number} frame */
-        function showFrame(frame) {
+        /** @returns {ComparisonPlaybackStatus} */
+        function playbackStatus() {
+            if (waitingForClick) return "waiting";
+            if (playing && advancePending) return "finishingLoop";
+            if (playing && data.steps[currentStep]?.loop) return "looping";
+            if (playing) return "playing";
+            if (currentFrame >= data.totalFrames - 1) return "finished";
+            return "paused";
+        }
+
+        /** @param {number} frame @param {number | null} tickStarted */
+        function showFrame(frame, tickStarted = null) {
             frame = animClampFrame(frame, data.totalFrames);
             var segment = animFindSegment(data.segments, frame);
-            currentSegment = animRenderSegFrame(
-                container,
-                segment,
-                currentSegment,
-                frame - segment.sf,
-            );
+            var segmentIndex = data.segments.indexOf(segment);
+            if (segmentIndex < 0) throw new Error("JavaScript selected an unknown segment");
             currentFrame = frame;
+            /** @type {ComparisonFrameSelection} */
+            var selection = {
+                frame: frame,
+                step: currentStep,
+                segment: segmentIndex,
+                localFrame: frame - segment.sf,
+                segmentChanged: segmentIndex !== currentSegment,
+                playback: playbackStatus(),
+            };
+            var selectionReady = tickStarted === null ? 0 : performance.now();
+            renderer.render(selection);
+            if (tickStarted !== null) {
+                var rendered = performance.now();
+                observer?.({
+                    marshalMs: 0,
+                    executeMs: selectionReady - tickStarted,
+                    decodeMs: 0,
+                    hostMs: rendered - selectionReady,
+                    totalMs: rendered - tickStarted,
+                });
+            }
+            currentSegment = segmentIndex;
         }
 
         function cancelPending() {
@@ -263,6 +319,8 @@
         function tick(timestamp) {
             pendingFrame = null;
             if (disposed || !playing || waitingForClick) return;
+            var tickStarted =
+                observer !== null && (observeTick?.() ?? true) ? performance.now() : null;
             if (startTime === null) startTime = timestamp;
             var frame = animComputeFrame(startTime, timestamp, data.fps, pauseFrame);
             var stepInfo = data.steps[currentStep];
@@ -299,12 +357,12 @@
                     pauseFrame = frame;
                     waitingForClick = true;
                     currentStep = pause.pauseAtStep;
-                    showFrame(frame);
+                    showFrame(frame, tickStarted);
                     return;
                 }
                 currentStep = animFindCurrentStep(data.steps, frame);
             }
-            showFrame(frame);
+            showFrame(frame, tickStarted);
             schedule();
         }
 
@@ -357,13 +415,9 @@
 
         /** @returns {LegacySnapshot} */
         function snapshot() {
-            var stepInfo = data.steps[currentStep];
-            var playback = "paused";
-            if (waitingForClick) playback = "waiting";
-            else if (playing && advancePending) playback = "finishing loop";
-            else if (playing && stepInfo && stepInfo.loop) playback = "looping";
-            else if (playing) playback = "playing";
-            else if (currentFrame >= data.totalFrames - 1) playback = "finished";
+            /** @type {string} */
+            var playback = playbackStatus();
+            if (playback === "finishingLoop") playback = "finishing loop";
             return { frame: currentFrame, step: currentStep, playback: playback };
         }
 
@@ -371,6 +425,7 @@
             if (disposed) return;
             disposed = true;
             cancelPending();
+            renderer.dispose?.();
         }
 
         showFrame(0);
@@ -483,7 +538,7 @@
      * @param {HTMLElement} target
      * @param {ReturnType<typeof phaseSnapshot>} snapshot
      * @param {boolean} enabled
-     * @param {"vir" | "fir"} engine
+     * @param {"js" | "vir" | "fir"} engine
      */
     function renderPhaseMetric(target, snapshot, enabled, engine) {
         /** @param {string} name @param {number} value */
@@ -501,12 +556,34 @@
         var scratch = target.querySelector("[data-phase=scratch]");
         if (scratch) scratch.textContent = formatBytes(snapshot.scratchBytes);
         var title = target.querySelector("[data-phase-title]");
-        if (title)
-            title.textContent = engine === "fir" ? "FIR live callback" : "VIR retained callback";
+        if (title) {
+            title.textContent =
+                engine === "js"
+                    ? "JavaScript selection callback"
+                    : engine === "fir"
+                      ? "FIR selection callback"
+                      : "VIR full callback";
+        }
         var inputLabel = target.querySelector("[data-phase-label=input]");
-        if (inputLabel) inputLabel.textContent = engine === "fir" ? "event encode" : "marshal";
+        if (inputLabel) {
+            inputLabel.textContent =
+                engine === "js"
+                    ? "direct JS object"
+                    : engine === "fir"
+                      ? "event encode"
+                      : "marshal";
+        }
+        var executeLabel = target.querySelector("[data-phase-label=execute]");
+        if (executeLabel) {
+            executeLabel.textContent = engine === "js" ? "decision + selection" : "execute";
+        }
+        var decodeLabel = target.querySelector("[data-phase-label=decode]");
+        if (decodeLabel) decodeLabel.textContent = engine === "js" ? "no decode" : "decode";
         var hostLabel = target.querySelector("[data-phase-label=host]");
-        if (hostLabel) hostLabel.textContent = engine === "fir" ? "DOM apply" : "host ⊂ execute";
+        if (hostLabel) {
+            hostLabel.textContent =
+                engine === "js" || engine === "fir" ? "shared DOM apply" : "host ⊂ execute";
+        }
         var count = target.querySelector("[data-phase-count]");
         if (count) {
             count.textContent = enabled
@@ -517,16 +594,18 @@
         if (setup) {
             var creation = snapshot.creation;
             setup.textContent =
-                engine === "fir" && creation
-                    ? "create " +
-                      formatNumber(creation.totalMs, 2) +
-                      " ms · project " +
-                      formatNumber(creation.projectMs, 2) +
-                      " ms · selection encode " +
-                      formatNumber(creation.encodeMs, 2) +
-                      " ms · resident " +
-                      formatBytes(creation.persistentBytes)
-                    : "shared runtime";
+                engine === "js"
+                    ? "plain JS object · zero conversion"
+                    : engine === "fir" && creation
+                      ? "create " +
+                        formatNumber(creation.totalMs, 2) +
+                        " ms · project " +
+                        formatNumber(creation.projectMs, 2) +
+                        " ms · selection encode " +
+                        formatNumber(creation.encodeMs, 2) +
+                        " ms · resident " +
+                        formatBytes(creation.persistentBytes)
+                      : "shared runtime";
         }
     }
 
@@ -546,13 +625,16 @@
         );
     }
 
-    function phaseMarkup() {
+    /** @param {"js" | "candidate"} owner */
+    function phaseMarkup(owner) {
         return (
-            '<div class="phase-metric" data-candidate-phases>' +
+            '<div class="phase-metric" data-' +
+            owner +
+            "-phases>" +
             "<header><strong data-phase-title>VIR retained callback</strong><span><small data-phase-count>0 retained callbacks</small><small data-phase-setup>shared runtime</small></span></header>" +
             '<span><strong data-phase="marshal">0.000 ms</strong><small data-phase-label="input">marshal</small></span>' +
-            '<span><strong data-phase="execute">0.000 ms</strong><small>execute</small></span>' +
-            '<span><strong data-phase="decode">0.000 ms</strong><small>decode</small></span>' +
+            '<span><strong data-phase="execute">0.000 ms</strong><small data-phase-label="execute">execute</small></span>' +
+            '<span><strong data-phase="decode">0.000 ms</strong><small data-phase-label="decode">decode</small></span>' +
             '<span><strong data-phase="rewind">0.000 ms</strong><small>rewind</small></span>' +
             '<span><strong data-phase="host">0.000 ms</strong><small data-phase-label="host">host ⊂ execute</small></span>' +
             '<span><strong data-phase="total">0.000 ms</strong><small>candidate total</small></span>' +
@@ -585,11 +667,12 @@
                 '<section class="player"><h3><span class="engine-dot js"></span>JavaScript</h3>' +
                 '<div class="stage" data-stage="js"></div>' +
                 metricMarkup("js") +
+                phaseMarkup("js") +
                 "</section>" +
                 '<section class="player"><h3><span class="engine-dot vir" data-candidate-dot></span><span data-candidate-name>Lean · VIR</span></h3>' +
                 '<div class="stage" data-stage="candidate"></div>' +
                 metricMarkup("candidate") +
-                phaseMarkup() +
+                phaseMarkup("candidate") +
                 "</section></div>" +
                 '<footer><button type="button" data-action="advance">Play / pause / advance</button>' +
                 '<button type="button" class="quiet" data-action="reset">Reset</button>' +
@@ -702,7 +785,7 @@
             if (!(container instanceof HTMLElement)) {
                 throw new Error("FIR candidate container is missing");
             }
-            var renderer = createFirSelectionDomRenderer(data, container);
+            var renderer = createSelectionDomRenderer(data, container);
             return createFirLivePlayerHost(
                 firAdapter,
                 data,
@@ -738,7 +821,9 @@
             registerMetrics(jsOwner, "js");
             registerMetrics(candidateOwner, currentBackend);
             var legacy = withOwner(jsOwner, function () {
-                return mountLegacy(example.data, jsStage);
+                return mountLegacy(example.data, jsStage, recordJsSelectionTiming, function () {
+                    return Boolean(phaseTiming?.checked);
+                });
             });
             var candidate = withOwner(candidateOwner, function () {
                 return mountCandidate(example.data, index);
@@ -890,6 +975,7 @@
                 if (!jsValue || !candidateValue) return;
                 var jsMetric = metricSnapshot(jsValue, now);
                 var candidateMetric = metricSnapshot(candidateValue, now);
+                var jsPhases = phaseSnapshot(jsValue, jsMetric.mean, now);
                 var candidatePhases = phaseSnapshot(candidateValue, candidateMetric.mean, now);
                 renderMetric(
                     /** @type {HTMLElement} */ (article.querySelector('[data-engine="js"]')),
@@ -898,6 +984,12 @@
                 renderMetric(
                     /** @type {HTMLElement} */ (article.querySelector('[data-engine="candidate"]')),
                     candidateMetric,
+                );
+                renderPhaseMetric(
+                    /** @type {HTMLElement} */ (article.querySelector("[data-js-phases]")),
+                    jsPhases,
+                    virTiming.checked,
+                    "js",
                 );
                 renderPhaseMetric(
                     /** @type {HTMLElement} */ (article.querySelector("[data-candidate-phases]")),
@@ -1000,11 +1092,16 @@
                 firAvailable: firAdapter !== null,
                 timingEnabled: virTiming.checked,
                 rows: rows.map(function (row) {
+                    var jsValue = metrics.get(row.jsOwner);
                     var candidate = metrics.get(row.candidateOwner);
                     var callback = candidate ? metricSnapshot(candidate, now) : null;
                     return {
                         index: row.index,
                         title: examples[row.index].title,
+                        jsCallback: jsValue ? metricSnapshot(jsValue, now) : null,
+                        jsPhases: jsValue
+                            ? phaseSnapshot(jsValue, metricSnapshot(jsValue, now).mean, now)
+                            : null,
                         callback: callback,
                         phases: candidate
                             ? phaseSnapshot(candidate, callback?.mean ?? 0, now)
