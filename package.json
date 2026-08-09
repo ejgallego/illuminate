@@ -5,6 +5,7 @@
         "measure:fir-native": "node --no-warnings scripts/measure-fir-native.mjs",
         "measure:fir-live": "node --no-warnings scripts/measure-fir-live.mjs",
         "measure:live-dashboard": "uv run scripts/measure-live-dashboard.py",
+        "measure:vir-selection-core": "node --no-warnings scripts/measure-vir-selection-core.mjs",
         "stage:fir-live": "bash scripts/stage-fir-live-player.sh",
         "stage:native": "bash scripts/stage-native-player.sh",
         "stage:players": "npm run stage:vir && npm run stage:native",

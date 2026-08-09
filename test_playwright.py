@@ -947,6 +947,17 @@ def test_animation_comparison_dashboard(page):
     )
     cpu_values = page.locator("[data-summary-stat=cpu]").all_inner_texts()
     assert all(float(value.rstrip("%")) >= 0 for value in cpu_values)
+    page.wait_for_function(
+        """() => [...document.querySelectorAll('[data-overhead-value]')]
+            .every(node => Number.parseFloat(node.textContent || '0') > 0)""",
+        timeout=10_000,
+    )
+    assert page.locator("[data-overhead-ratio]").count() == 16
+    assert float(
+        page.locator('[data-summary="candidate"] [data-summary-stat="ratio"]')
+        .inner_text()
+        .rstrip("×")
+    ) > 0
     page.locator("#comparison-vir-timing").check()
     page.wait_for_function(
         """() => [...document.querySelectorAll('[data-phase-count]')]
@@ -979,6 +990,7 @@ def test_animation_comparison_dashboard(page):
             Number.parseFloat(panel.querySelector('[data-phase=host]')?.textContent || '0') <=
             Number.parseFloat(panel.querySelector('[data-phase=execute]')?.textContent || '0'))"""
     )
+    assert page.locator("[data-overhead-ratio]").count() == 16
     assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
 
     if fir_live_staged:
@@ -999,6 +1011,7 @@ def test_animation_comparison_dashboard(page):
               )].every(node => node.textContent?.startsWith('create '))""",
             timeout=10_000,
         )
+        assert page.locator("[data-overhead-ratio]").count() == 16
         assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
 
     page.click("#comparison-pause")

@@ -577,6 +577,37 @@
 
     /**
      * @param {HTMLElement} target
+     * @param {ReturnType<typeof metricSnapshot>} reference
+     * @param {ReturnType<typeof metricSnapshot>} candidate
+     */
+    function renderOverheadRatio(target, reference, candidate) {
+        var ratio = reference.mean > 0 ? candidate.mean / reference.mean : 0;
+        var delta = candidate.mean - reference.mean;
+        var value = target.querySelector("[data-overhead-value]");
+        var detail = target.querySelector("[data-overhead-detail]");
+        var fill = /** @type {HTMLElement | null} */ (target.querySelector("[data-overhead-fill]"));
+        if (!Number.isFinite(ratio) || ratio <= 0) {
+            if (value) value.textContent = "—";
+            if (detail) detail.textContent = "waiting for paired callbacks";
+            if (fill) fill.style.width = "0%";
+            target.dataset.overheadState = "waiting";
+            target.dataset.overheadRatio = "";
+            return;
+        }
+        if (value) value.textContent = formatNumber(ratio, 2) + "× JS";
+        if (detail) {
+            var unit = Math.abs(delta) < 1 ? " μs" : " ms";
+            var scaled = Math.abs(delta) < 1 ? delta * 1000 : delta;
+            var sign = scaled > 0 ? "+" : "";
+            detail.textContent = sign + formatNumber(scaled, Math.abs(scaled) < 10 ? 1 : 0) + unit;
+        }
+        if (fill) fill.style.width = formatNumber(Math.min(ratio, 10) * 10, 1) + "%";
+        target.dataset.overheadState = ratio <= 1 ? "faster" : "slower";
+        target.dataset.overheadRatio = String(ratio);
+    }
+
+    /**
+     * @param {HTMLElement} target
      * @param {ReturnType<typeof phaseSnapshot>} snapshot
      * @param {boolean} enabled
      * @param {"js" | "vir-selection" | "vir-full" | "fir"} engine
@@ -727,6 +758,7 @@
                 '<section class="player"><h3><span class="engine-dot vir" data-candidate-dot></span><span data-candidate-name>Lean · VIR</span></h3>' +
                 '<div class="stage" data-stage="candidate"></div>' +
                 metricMarkup("candidate") +
+                '<div class="overhead-ratio" data-overhead-ratio data-overhead-state="waiting"><div><strong data-overhead-value>—</strong><small>whole callback / paired JavaScript</small></div><output data-overhead-detail>waiting for paired callbacks</output><span class="overhead-track"><i data-overhead-fill></i><b title="JavaScript baseline"></b></span></div>' +
                 phaseMarkup("candidate") +
                 "</section></div>" +
                 '<footer><button type="button" data-action="advance">Play / pause / advance</button>' +
@@ -1050,13 +1082,14 @@
         function refreshDashboard() {
             var now = performance.now();
             var engineTotals = {
-                js: { fps: 0, cpu: 0, active: 0 },
-                candidate: { fps: 0, cpu: 0, active: 0 },
+                js: { fps: 0, cpu: 0, mean: 0, active: 0 },
+                candidate: { fps: 0, cpu: 0, mean: 0, active: 0 },
             };
             rows.forEach(function (row) {
-                var article = /** @type {HTMLElement} */ (
-                    dashboardGrid.querySelector('[data-example="' + String(row.index) + '"]')
+                var article = dashboardGrid.querySelector(
+                    '[data-example="' + String(row.index) + '"]',
                 );
+                if (!(article instanceof HTMLElement)) return;
                 var jsValue = metrics.get(row.jsOwner);
                 var candidateValue = metrics.get(row.candidateOwner);
                 if (!jsValue || !candidateValue) return;
@@ -1070,6 +1103,11 @@
                 );
                 renderMetric(
                     /** @type {HTMLElement} */ (article.querySelector('[data-engine="candidate"]')),
+                    candidateMetric,
+                );
+                renderOverheadRatio(
+                    /** @type {HTMLElement} */ (article.querySelector("[data-overhead-ratio]")),
+                    jsMetric,
                     candidateMetric,
                 );
                 renderPhaseMetric(
@@ -1092,7 +1130,10 @@
                     var value = /** @type {ReturnType<typeof metricSnapshot>} */ (pair[1]);
                     engineTotals[engine].fps += value.fps;
                     engineTotals[engine].cpu += value.cpuPercent;
-                    if (value.fps > 0) engineTotals[engine].active += 1;
+                    if (value.fps > 0) {
+                        engineTotals[engine].mean += value.mean;
+                        engineTotals[engine].active += 1;
+                    }
                 }
                 var snapshot = row.legacy.snapshot();
                 var scrubber = /** @type {HTMLInputElement} */ (
@@ -1169,6 +1210,19 @@
                         summaryCpu.textContent = formatNumber(values.cpu, 1) + "%";
                     }
                 }
+            }
+            var jsMean =
+                engineTotals.js.active === 0 ? 0 : engineTotals.js.mean / engineTotals.js.active;
+            var candidateMean =
+                engineTotals.candidate.active === 0
+                    ? 0
+                    : engineTotals.candidate.mean / engineTotals.candidate.active;
+            var summaryRatio = document.querySelector(
+                '[data-summary="candidate"] [data-summary-stat="ratio"]',
+            );
+            if (summaryRatio) {
+                summaryRatio.textContent =
+                    jsMean > 0 ? formatNumber(candidateMean / jsMean, 2) + "×" : "—";
             }
         }
 

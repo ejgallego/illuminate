@@ -310,6 +310,16 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .metric span \{ min-width: 0; padding: 9px 10px; background: #151f37; }
 .metric strong \{ display: block; overflow: hidden; color: #f2f5ff; font: 700 14px ui-monospace, monospace; text-overflow: ellipsis; }
 .metric small \{ display: block; overflow: hidden; margin-top: 3px; color: #7586a7; font-size: 9px; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.overhead-ratio \{ display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 5px 12px; align-items: center; margin-top: 8px; padding: 9px 10px; background: #151f37; border: 1px solid #263453; border-radius: 8px; }
+.overhead-ratio div \{ min-width: 0; }
+.overhead-ratio strong \{ display: block; color: #f2f5ff; font: 700 15px ui-monospace, monospace; }
+.overhead-ratio small \{ display: block; overflow: hidden; margin-top: 2px; color: #7586a7; font-size: 8px; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
+.overhead-ratio output \{ color: #98a8c8; font: 700 11px ui-monospace, monospace; }
+.overhead-track \{ position: relative; grid-column: 1 / -1; height: 5px; overflow: hidden; background: #0d1426; border-radius: 999px; }
+.overhead-track i \{ display: block; width: 0; height: 100%; background: linear-gradient(90deg, #f4cc55, #668fff); border-radius: inherit; transition: width .2s ease; }
+.overhead-track b \{ position: absolute; top: 0; bottom: 0; left: 10%; width: 1px; background: #f4cc55; }
+.overhead-ratio[data-overhead-state=\"faster\"] strong \{ color: #74d4ae; }
+.overhead-ratio[data-overhead-state=\"slower\"] strong \{ color: #9ab4ff; }
 .phase-metric \{ display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; margin-top: 8px; overflow: hidden; background: #263453; border: 1px solid #263453; border-radius: 8px; }
 .phase-metric header \{ grid-column: 1 / -1; display: flex; justify-content: space-between; padding: 7px 10px; background: #11192d; }
 .phase-metric header strong \{ color: #9ab4ff; font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
@@ -342,10 +352,10 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 </nav>
 <section class=\"summaries\" aria-label=\"Aggregate statistics\">
   <article class=\"summary\" data-summary=\"js\"><span class=\"engine-dot js\"></span><h2>JavaScript aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span></article>
-  <article class=\"summary\" data-summary=\"candidate\"><span class=\"engine-dot vir\"></span><h2>Lean · VIR selection aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span></article>
+  <article class=\"summary\" data-summary=\"candidate\"><span class=\"engine-dot vir\"></span><h2>Lean · VIR selection aggregate</h2><span><strong data-summary-stat=\"fps\">0.0</strong><small>mean active FPS</small></span><span><strong data-summary-stat=\"cpu\">0.0%</strong><small>one-core share</small></span><span><strong data-summary-stat=\"ratio\">—</strong><small>callback / paired JS</small></span></article>
 </section>
 <main id=\"comparison-grid\"></main>
-<p class=\"method\">Rolling two-second window. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
+<p class=\"method\">Rolling two-second window. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Each overhead badge divides candidate mean callback time by the JavaScript player beside it; its gold marker is 1× and its bar is capped at 10×. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
 <script type=\"module\">
 {js}
 </script>

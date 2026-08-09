@@ -190,6 +190,20 @@ private def selectionOutput
     (scheduleNextFrame : Bool) : SelectionPlayerOutput :=
   { action, scheduleNextFrame }
 
+/-- Initializes a compact selection player without retaining a VIR runtime handle. -/
+@[vir_export]
+def initialSelectionDirect
+    (animation : SelectionAnimation) : Except String LiveSelectionTransition :=
+  initialSelectionLive animation
+
+/-- Applies one compact transition without VIR handle or runtime-reference indirection. -/
+@[vir_export]
+def transitionSelectionDirect
+    (animation : SelectionAnimation)
+    (state : PlayerState)
+    (event : PlayerEvent) : LiveSelectionTransition :=
+  transitionSelectionLive animation state event
+
 /-- Validates and mounts a compact VIR player without transferring SVG patch tables. -/
 @[vir_export]
 def mountSelectionPlayer

@@ -129,13 +129,79 @@ npm run measure:live-dashboard -- --duration-ms 3000 --runs 3
 It writes raw observations and summaries to
 `test_output/perf/live-dashboard-phases.json`.
 
+The dashboard also renders this ratio directly for every example. The
+numeric badge is candidate mean callback time divided by the
+JavaScript mean beside it over the same rolling window. A fixed marker
+denotes 1× and the bar is capped at 10× so one slow example does not
+make the other bars unreadable. The aggregate candidate card reports
+the ratio of the two active-row means. The structured report records
+both `callbackOverheadRatio` and `callbackOverheadMs`.
+
+## Direct transition split
+
+Two diagnostic typed exports isolate a compact transition from
+retained VIR ownership:
+
+```text
+Illuminate.Animation.Vir.initialSelectionDirect
+Illuminate.Animation.Vir.transitionSelectionDirect
+```
+
+The benchmark threads the returned `PlayerState` through the direct
+entry and runs the same events through a mounted selection player.
+Calls are paired, their order alternates, target resolution is warm,
+and every direct selection and scheduling decision must equal the
+retained result. The table reports the median of five rounds with
+2,000 measured ticks per workload and round:
+
+| Workload                       | Direct execute | Retained execute | Execute delta | Retained host imports | Direct total | Retained total |
+| ------------------------------ | -------------: | ---------------: | ------------: | --------------------: | -----------: | -------------: |
+| Pause-driven slide show        |      0.0836 ms |        0.0893 ms |    +0.0057 ms |             0.0018 ms |    0.1660 ms |      0.1029 ms |
+| Morphing arrows and final loop |      0.0737 ms |        0.0796 ms |    +0.0058 ms |             0.0015 ms |    0.1264 ms |      0.0905 ms |
+
+`hostMs` is nested within `executeMs`; it is not additive. It
+attributes the synchronous JSL and `RuntimeRef` host operations. The
+execute delta is only an approximate price for retention because the
+direct entry accepts and returns `PlayerState`, while the retained
+entry accepts a handle and returns only the selection. Even with that
+caveat, retained ownership accounts for roughly 6–9% of execute in
+this paired Node sample, not most of it.
+
+The retained boundary is substantially cheaper end to end: avoiding
+repeated animation/state marshaling saves more than the handle and
+runtime-reference operations cost. This rejects replacing the
+production retained handle with a stateless typed transition. The
+absolute Node timings are not comparable to the browser table above;
+only the within-run paired deltas are used here.
+
+Run the split with:
+
+```sh
+npm run measure:vir-selection-core
+```
+
+It writes raw samples and environment identities to
+`test_output/perf/vir-selection-core.json`.
+
 ## Compatibility and lifecycle evidence
 
 The differential suite expands both compact selection outputs through
-the original browser-owned patch rows before comparison. All 106
-traces match the legacy JavaScript, VIR JSON, VIR typed full-action,
-VIR selection, FIR native full-action, and FIR selection
-implementations.
+the original browser-owned patch rows before comparison. At the FIR v4
+package baseline, all 106 traces matched the legacy JavaScript, VIR
+JSON, VIR typed full-action, VIR selection, FIR native full-action,
+and FIR selection implementations.
+
+The later `fix: preserve initial animation step` commit adds a 107th
+trace with two steps at frame zero. JavaScript and all three VIR lanes
+now select step 0. The immutable FIR native and selection packages
+were compiled from the previous `Player.lean` SHA-256
+`3ed87ac8d6a21c0afb2b00efcde6f5390c47be336c09214c24ead847bdb4f306`;
+the corrected source SHA-256 is
+`e1f98f9d02118f4b61a3f935dbdf49b1c3caf7c0b52aa0f80b7232fb740cd620`.
+The first FIR result therefore reports step 1 where the corrected
+oracle reports step 0. Both FIR artifacts must be regenerated before
+claiming 107-way six-lane parity. No adapter-side compatibility
+translation was added.
 
 Coverage includes every `PlayerEvent` constructor, pause and loop
 boundaries, timestamp jumps, replay, directed playback, segment
@@ -146,22 +212,19 @@ pending callback cancellation, and idempotent host disposal.
 ## Next performance question
 
 Selection-only VIR spends approximately 0.107 ms of the 0.154 ms
-callback in interpreted execution. Marshal and decode together account
-for about 0.022 ms; the shared DOM renderer is below 0.010 ms in this
-sample. The next investigation should therefore split the execute
-phase rather than further redesigning the data boundary:
+browser callback in interpreted execution. The direct split now shows
+that `JSL` plus `RuntimeRef` is a minority of paired execute time and
+that retaining animation/state is a net win once boundary conversion
+is included.
 
-1. Measure `transitionSelectionLive` through a direct typed entry
-   without `JSL` and `RuntimeRef` to establish the pure interpreter
-   cost.
-2. Compare it with the persistent handle path to price
-   `LeanRef.fromJSL` and `RuntimeRef.get`/`set` ownership work.
-3. Only then test specialized scalar tick/advance exports or a
-   retained dispatcher callback. Those change the call shape and
-   should be justified by measured handle or custom-inductive
-   overhead.
-4. Keep the generic `PlayerEvent` path as the differential oracle and
-   retain the full VIR renderer as the end-to-end control.
+The next experiment should keep the retained generic `PlayerEvent`
+path as the differential oracle and measure a specialized scalar tick
+export against it. That will price custom-inductive event marshaling
+without changing state ownership. If the saving is only around the
+current 0.010–0.011 ms input phase, application-level specialization
+is not justified; the larger remaining target is interpreter execution
+of the transition itself. Full VIR should remain the end-to-end
+rendering control.
 
 For FIR, bulk animation marshaling is no longer the priority. Its
 remaining tens-of-microseconds gap is distributed across event

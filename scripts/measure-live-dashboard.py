@@ -92,18 +92,22 @@ def summarize_backend(observations, backend: str):
         "totalMs",
         "adapterMs",
     )
+    js_callback_mean = statistics.median(
+        mean_row_field(observation, "jsCallback", "mean")
+        for observation in selected
+    )
+    candidate_callback_mean = statistics.median(
+        mean_row_field(observation, "callback", "mean")
+        for observation in selected
+    )
     return {
         "runs": len(selected),
         "minimumDomMatches": min(observation["domMatches"] for observation in selected),
         "rowCount": selected[0]["rowCount"],
-        "jsCallbackMeanMs": statistics.median(
-            mean_row_field(observation, "jsCallback", "mean")
-            for observation in selected
-        ),
-        "candidateCallbackMeanMs": statistics.median(
-            mean_row_field(observation, "callback", "mean")
-            for observation in selected
-        ),
+        "jsCallbackMeanMs": js_callback_mean,
+        "candidateCallbackMeanMs": candidate_callback_mean,
+        "callbackOverheadRatio": candidate_callback_mean / js_callback_mean,
+        "callbackOverheadMs": candidate_callback_mean - js_callback_mean,
         "jsPhases": {
             field: statistics.median(
                 mean_row_field(observation, "jsPhases", field)
@@ -159,7 +163,12 @@ def main():
                     context = browser.new_context()
                     try:
                         page = context.new_page()
-                        page.on("pageerror", lambda error: errors.append(str(error)))
+                        page.on(
+                            "pageerror",
+                            lambda error: errors.append(
+                                getattr(error, "stack", None) or str(error)
+                            ),
+                        )
                         page.goto(url)
                         page.wait_for_function(
                             "document.body.dataset.ready === 'true'", timeout=60_000
@@ -194,7 +203,7 @@ def main():
         if (summary := summarize_backend(observations, backend)) is not None
     }
     report = {
-        "schema": "illuminate.live-dashboard-phases/v2",
+        "schema": "illuminate.live-dashboard-phases/v3",
         "generatedAtUnix": time(),
         "scope": {
             "domIncluded": True,
@@ -235,7 +244,9 @@ def main():
         print(
             f"{backend.upper()}: {summary['minimumDomMatches']}/{summary['rowCount']} "
             f"DOM matches, median JS {summary['jsCallbackMeanMs']:.3f} ms, "
-            f"candidate {summary['candidateCallbackMeanMs']:.3f} ms"
+            f"candidate {summary['candidateCallbackMeanMs']:.3f} ms, "
+            f"{summary['callbackOverheadRatio']:.2f}x JS "
+            f"({summary['callbackOverheadMs'] * 1000:+.1f} us)"
         )
     print(f"wrote {report_path}")
 
