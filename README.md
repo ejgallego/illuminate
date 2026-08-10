@@ -419,6 +419,11 @@ infoview. Hover over a `#diagram` line to see a live SVG preview:
 #diagram Diagram.circle 30
 ```
 
+The preview prepares its hit-test geometry once. When the staged VIR
+assets are available, hover queries run in browser-resident Lean; the
+small selector beside the preview can switch back to the existing Lean
+server RPC path. Missing or incompatible VIR assets fall back to RPC.
+
 ### Parameterized Diagrams
 
 Diagram functions can accept interactive parameters using gadget
@@ -583,7 +588,9 @@ Prepared diagram hit testing has a smaller runtime-focused comparison.
 It mounts the same generated `HitScene` once in VIR and FIR, then runs
 301 bit-exact geometry queries in balanced warm-up and measurement
 rounds. Production wall-clock samples and detailed runtime phases are
-collected in separate passes:
+collected in separate passes. There is no independent JavaScript
+geometry implementation: the existing JavaScript widget delegates to
+Lean server RPC, which remains the InfoView baseline.
 
 ```sh
 ILLUMINATE_FIR_HIT_SCENE_DIR=/absolute/immutable/package \
@@ -593,7 +600,19 @@ ILLUMINATE_FIR_HIT_SCENE_DIR=/absolute/immutable/package \
 Without the FIR variable, the page remains useful as a VIR baseline
 and marks FIR as pending. The raw report is written to
 `test_output/hit-scene-performance.json`; the visual report is at
-<http://127.0.0.1:8765/hit-scene-performance.html>.
+<http://127.0.0.1:8765/hit-scene-performance.html>. Its live button
+reruns the browser-resident backends in the current tab. A tiered VIR
+diagnostic separates small bounds, mixed geometry, and large
+path-heavy scenes, including query-class breakdowns:
+
+```sh
+npm run profile:vir-hit-scene
+npm run stage:hit-scene-performance
+```
+
+The protocol, current numbers, and resulting optimization priorities
+are recorded in
+[HIT_SCENE_PERFORMANCE_REPORT.md](HIT_SCENE_PERFORMANCE_REPORT.md).
 
 The live-dashboard measurement runs every backend with the detailed
 host observer both disabled and enabled. Each pair shares one fresh

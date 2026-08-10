@@ -12,6 +12,7 @@ if [ -n "${ILLUMINATE_FIR_HIT_SCENE_DIR:-}" ]; then
   npm run stage:fir-hit-scene
 fi
 npm run measure:hit-scene
+npm run profile:vir-hit-scene -- --quick
 npm run stage:hit-scene-performance
 
 echo "Illuminate VIR / FIR HitScene performance:"

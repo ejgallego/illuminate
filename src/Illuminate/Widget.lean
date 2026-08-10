@@ -11,6 +11,7 @@ public import Illuminate.Diagram.HitScene
 public meta import Illuminate.Widget.Prepared
 public import Lean.Environment
 import Lean.DocString.Syntax
+public import Illuminate.Vir.Asset
 public section
 
 
@@ -54,7 +55,7 @@ open Lean Widget in
 /-- Widget module that renders diagrams with optional parameter controls and hit-test hover. -/
 @[widget_module]
 meta def diagramWidget : Lean.Widget.Module where
-  javascript := include_str "../../player_js/diagram_widget.js"
+  javascript := include_str "../../player_js/generated/diagram_widget.js"
 
 /-!
 # Helpers
@@ -487,5 +488,8 @@ meta unsafe def elabDiagramCmd : CommandElab := fun stx => do
       ("exprId", toJson id),
       ("initialSvg", .str prepared.svg),
       ("initialHitScene", .str prepared.hitScene),
-      ("parameters", .arr gadgets)]
+      ("parameters", .arr gadgets),
+      ("wasmPath", .str virWasmAssetPath),
+      ("packageSetPath", .str virHitScenePackageSetAssetPath),
+      ("autoReloadMs", .num 1000)]
     savePanelWidgetInfo diagramWidget.javascriptHash.val (pure props) stx

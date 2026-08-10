@@ -1,4 +1,5 @@
 export const HIT_SCENE_BENCHMARK_SCHEMA = "illuminate.hit-scene-benchmark/v1";
+export const HIT_SCENE_BENCHMARK_SUITE_SCHEMA = "illuminate.hit-scene-benchmark-suite/v1";
 
 const bitStorage = new ArrayBuffer(8);
 const bitView = new DataView(bitStorage);
@@ -74,17 +75,22 @@ export function parseHitSceneBenchmark(source) {
         if (float64ToBits(x) !== query.xBits || float64ToBits(y) !== query.yBits) {
             throw new Error(`query ${query.name} did not round-trip its binary64 payloads`);
         }
+        const expected = validateExpected(query.expected, index);
         return Object.freeze({
             name: query.name,
+            queryClass: String(query.queryClass ?? "unclassified"),
+            resultClass: expected.kind,
             xBits: query.xBits,
             yBits: query.yBits,
             x,
             y,
-            expected: validateExpected(query.expected, index),
+            expected,
         });
     });
     return Object.freeze({
         schemaVersion: value.schemaVersion,
+        name: String(value.name ?? "unnamed"),
+        geometryClass: String(value.geometryClass ?? "unclassified"),
         description: String(value.description ?? ""),
         encodedScene: value.encodedScene,
         parsedScene,
@@ -94,10 +100,37 @@ export function parseHitSceneBenchmark(source) {
     });
 }
 
+/** Parses and validates a Lean-generated tiered benchmark suite. */
+export function parseHitSceneBenchmarkSuite(source) {
+    const value = typeof source === "string" ? JSON.parse(source) : source;
+    if (value?.schemaVersion !== HIT_SCENE_BENCHMARK_SUITE_SCHEMA) {
+        throw new Error(
+            `unsupported hit-scene benchmark suite schema ${String(value?.schemaVersion)}`,
+        );
+    }
+    if (!Array.isArray(value.fixtures) || value.fixtures.length === 0) {
+        throw new Error("hit-scene benchmark suite has no fixtures");
+    }
+    const fixtures = value.fixtures.map(parseHitSceneBenchmark);
+    const names = new Set(fixtures.map((fixture) => fixture.name));
+    if (names.size !== fixtures.length)
+        throw new Error("hit-scene suite has duplicate fixture names");
+    return Object.freeze({
+        schemaVersion: value.schemaVersion,
+        fixtures: Object.freeze(fixtures),
+    });
+}
+
 /** Loads a benchmark fixture from a filesystem path. */
 export async function loadHitSceneBenchmark(path) {
     const { readFile } = await import("node:fs/promises");
     return parseHitSceneBenchmark(await readFile(path, "utf8"));
+}
+
+/** Loads a tiered benchmark suite from a filesystem path. */
+export async function loadHitSceneBenchmarkSuite(path) {
+    const { readFile } = await import("node:fs/promises");
+    return parseHitSceneBenchmarkSuite(await readFile(path, "utf8"));
 }
 
 /** Fetches a benchmark fixture in a browser. */
@@ -105,6 +138,14 @@ export async function fetchHitSceneBenchmark(url) {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`failed to fetch hit-scene benchmark: ${response.status}`);
     return parseHitSceneBenchmark(await response.json());
+}
+
+/** Fetches a tiered benchmark suite in a browser. */
+export async function fetchHitSceneBenchmarkSuite(url) {
+    const response = await fetch(url);
+    if (!response.ok)
+        throw new Error(`failed to fetch hit-scene benchmark suite: ${response.status}`);
+    return parseHitSceneBenchmarkSuite(await response.json());
 }
 
 function sameResult(left, right) {

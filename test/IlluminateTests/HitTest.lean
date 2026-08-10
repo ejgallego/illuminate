@@ -147,6 +147,28 @@ private def preparedHitBenchmarkDiagram : Diagram SVG :=
 private def preparedHitBenchmarkLabels : Array (Nat × String) :=
   #[(1, "back"), (2, "front")]
 
+private def boundsHitBenchmarkDiagram : Diagram SVG :=
+  let text : Diagram SVG := .tag 10 (Diagram.text "bounds" { fontSize := 12 })
+  let image : Diagram SVG :=
+    .transform (Matrix.translate 16 0) <|
+      .tag 11 (.prim (.image { path := "bounds.svg", width := 10, height := 8 }))
+  Diagram.compose text image
+
+private def pathHitBenchmarkCell (index : Nat) : Diagram SVG :=
+  let x := ((index % 6).toFloat - 2.5) * 12
+  let y := ((index / 6).toFloat - 2.5) * 12
+  let cubic := PathData.empty
+    |>.moveTo (Vec2.mk (-4) (-3))
+    |>.curveTo (Vec2.mk (-2) 5) (Vec2.mk 2 5) (Vec2.mk 4 (-3))
+    |>.lineTo (Vec2.mk (-4) (-3))
+    |>.close
+  let path := if index % 2 == 0 then PathData.circle 4 else cubic
+  .transform (Matrix.translate x y) <| .tag (100 + index) (Diagram.fromPath path)
+
+private def pathHitBenchmarkDiagram : Diagram SVG :=
+  (List.range 36).foldl (fun diagram index =>
+    Diagram.compose diagram (pathHitBenchmarkCell index)) (.empty : Diagram SVG)
+
 private def preparedHitBenchmarkPoints : List (String × Point) :=
   let specialPoints := [
     ("origin", Point.mk 0 0),
@@ -171,6 +193,17 @@ private def preparedHitBenchmarkPoints : List (String × Point) :=
   ]
   specialPoints ++ gridPoints ++ exactPoints
 
+private def boundsHitBenchmarkPoints : List (String × Point) :=
+  let gridPoints := (List.range 9).flatMap fun x =>
+    (List.range 9).map fun y =>
+      (s!"grid-{x}-{y}", Point.mk ((x.toFloat - 4) * 5) ((y.toFloat - 4) * 3))
+  [("text-center", Point.mk 0 0), ("image-center", Point.mk 16 0)] ++ gridPoints
+
+private def pathHitBenchmarkPoints : List (String × Point) :=
+  (List.range 25).flatMap fun x =>
+    (List.range 25).map fun y =>
+      (s!"grid-{x}-{y}", Point.mk ((x.toFloat - 12) * 3) ((y.toFloat - 12) * 3))
+
 private def clickToHitSceneResult (scene : HitScene) : Click → HitSceneResult
   | .nothing => .nothing
   | .something => .something
@@ -184,26 +217,73 @@ private def hitSceneResultToJson : HitSceneResult → Json
       ("value", toJson value),
       ("label", label)]
 
-private def preparedHitBenchmarkFixture : String :=
-  let diagram := preparedHitBenchmarkDiagram
-  let scene := diagram.prepareHitScene preparedHitBenchmarkLabels
-  let queries := preparedHitBenchmarkPoints.toArray.map fun (name, point) =>
+private def hitBenchmarkQueryClass (name : String) : String :=
+  if name.startsWith "grid-" then "grid"
+  else if name.startsWith "boundary-" || name.startsWith "layer-" then "boundary"
+  else if name.startsWith "negative-zero" || name.startsWith "fractional-" then "numeric-edge"
+  else "named-probe"
+
+private def hitBenchmarkFixtureJson (name geometryClass description : String)
+    (diagram : Diagram SVG) (labels : Array (Nat × String))
+    (points : List (String × Point)) (referenceQueryCount : Nat)
+    (coverage : Array String) : Json :=
+  let scene := diagram.prepareHitScene labels
+  let queries := points.toArray.map fun (queryName, point) =>
     let expected := clickToHitSceneResult scene (diagram.hitTest point)
     Json.mkObj [
-      ("name", name),
+      ("name", queryName),
+      ("queryClass", hitBenchmarkQueryClass queryName),
       ("xBits", toString point.x.toBits),
       ("yBits", toString point.y.toBits),
       ("expected", hitSceneResultToJson expected)]
-  toString <| Json.mkObj [
+  Json.mkObj [
     ("schemaVersion", "illuminate.hit-scene-benchmark/v1"),
-    ("description", "Prepared mixed geometry with bit-exact semantic-oracle queries"),
+    ("name", name),
+    ("geometryClass", geometryClass),
+    ("description", description),
     ("encodedScene", scene.encode),
-    ("referenceQueryCount", toJson 296),
+    ("referenceQueryCount", toJson referenceQueryCount),
     ("queryCount", toJson queries.size),
-    ("coverage", Json.arr <| #[
-      "empty", "transform", "clip", "tag", "unlabeledTag", "compose", "bounds",
-      "text", "styledText", "image", "line", "cubic", "arc", "fill", "stroke"].map Json.str),
+    ("coverage", Json.arr <| coverage.map Json.str),
     ("queries", Json.arr queries)]
+
+private def preparedHitBenchmarkFixtureJson : Json :=
+  hitBenchmarkFixtureJson
+    "mixed-medium"
+    "mixed"
+    "Prepared mixed geometry with bit-exact semantic-oracle queries"
+    preparedHitBenchmarkDiagram
+    preparedHitBenchmarkLabels
+    preparedHitBenchmarkPoints
+    296
+    #["empty", "transform", "clip", "tag", "unlabeledTag", "compose", "bounds",
+      "text", "styledText", "image", "line", "cubic", "arc", "fill", "stroke"]
+
+private def preparedHitBenchmarkFixture : String :=
+  toString preparedHitBenchmarkFixtureJson
+
+private def preparedHitBenchmarkSuite : String :=
+  let bounds := hitBenchmarkFixtureJson
+    "bounds-small"
+    "bounds"
+    "Small text and image scene using prepared axis-aligned bounds"
+    boundsHitBenchmarkDiagram
+    #[(10, "text"), (11, "image")]
+    boundsHitBenchmarkPoints
+    boundsHitBenchmarkPoints.length
+    #["bounds", "text", "image", "transform", "tag", "compose"]
+  let paths := hitBenchmarkFixtureJson
+    "paths-large"
+    "paths"
+    "Large transformed path scene alternating arc and cubic geometry"
+    pathHitBenchmarkDiagram
+    #[]
+    pathHitBenchmarkPoints
+    pathHitBenchmarkPoints.length
+    #["path", "transform", "tag", "compose", "cubic", "arc", "fill"]
+  toString <| Json.mkObj [
+    ("schemaVersion", "illuminate.hit-scene-benchmark-suite/v1"),
+    ("fixtures", Json.arr #[bounds, preparedHitBenchmarkFixtureJson, paths])]
 
 def testPreparedHitScene_matchesDiagram : IO Unit := do
   let diagram := preparedHitBenchmarkDiagram
@@ -224,6 +304,9 @@ def testPreparedHitScene_writeBenchmarkFixture : IO Unit := do
   let fixture := preparedHitBenchmarkFixture
   IO.FS.writeFile "test_output/hit-scene-benchmark.json" fixture
   IO.println s!"  → wrote test_output/hit-scene-benchmark.json ({fixture.length} bytes)"
+  let suite := preparedHitBenchmarkSuite
+  IO.FS.writeFile "test_output/hit-scene-benchmark-suite.json" suite
+  IO.println s!"  → wrote test_output/hit-scene-benchmark-suite.json ({suite.length} bytes)"
 
 def hitTestTests : List (String × IO Unit) :=
   [ ("hitTest: filled rect interior", testHitTest_filledRect_interior)

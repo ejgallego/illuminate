@@ -22,6 +22,7 @@
         "vir_reveal.js",
         "color_widget.js",
         "vir_hit_scene.js",
+        "vir_infoview_runtime.js",
         "diagram_widget.js",
         "animate_widget.js",
         "animate_vir_widget.js",

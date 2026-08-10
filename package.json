@@ -9,6 +9,7 @@
         "measure:live-dashboard": "uv run scripts/measure-live-dashboard.py",
         "measure:vir-hit-scene-memory": "node --no-warnings scripts/measure-vir-hit-scene-memory.mjs",
         "measure:vir-hit-scene-probes": "node --no-warnings scripts/measure-vir-hit-scene-probes.mjs",
+        "profile:vir-hit-scene": "node --no-warnings scripts/profile-vir-hit-scene.mjs",
         "measure:vir-selection-core": "node --no-warnings scripts/measure-vir-selection-core.mjs",
         "stage:fir-live": "bash scripts/stage-fir-live-player.sh",
         "stage:fir-hit-scene": "bash scripts/stage-fir-hit-scene.sh",

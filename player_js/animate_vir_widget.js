@@ -45,14 +45,14 @@ export function decodeVirAsset(data) {
 /** @param {import("@leanprover/infoview").RpcSession} rpc @param {string} path */
 async function statAsset(rpc, path) {
     return /** @type {Promise<VirAssetResponse>} */ (
-        rpc.call("Illuminate.statAnimationVirAsset", { path: path })
+        rpc.call("Illuminate.statVirAsset", { path: path })
     );
 }
 
 /** @param {import("@leanprover/infoview").RpcSession} rpc @param {string} path */
 async function readAsset(rpc, path) {
     return /** @type {Promise<VirAssetResponse>} */ (
-        rpc.call("Illuminate.readAnimationVirAsset", { path: path })
+        rpc.call("Illuminate.readVirAsset", { path: path })
     );
 }
 

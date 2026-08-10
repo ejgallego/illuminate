@@ -1,6 +1,12 @@
 // @ts-check
 import * as React from "react";
 import { useRpcSession } from "@leanprover/infoview";
+import { createVirHitSceneController } from "./vir_hit_scene.js";
+import {
+    acquireVirRuntimeService,
+    releaseVirRuntimeService,
+    statVirRuntimeRevision,
+} from "./vir_infoview_runtime.js";
 const e = React.createElement;
 
 /**
@@ -8,9 +14,18 @@ const e = React.createElement;
  * @typedef {{ kind: 'textInput', name: string, initial: string }} TextInputParam
  * @typedef {{ kind: 'checkbox', name: string, initial: boolean }} CheckboxParam
  * @typedef {SliderParam | TextInputParam | CheckboxParam} GadgetParam
- * @typedef {{ exprId: number, initialSvg: string, initialHitScene: string, parameters: GadgetParam[] }} DiagramProps
+ * @typedef {{
+ *   exprId: number,
+ *   initialSvg: string,
+ *   initialHitScene: string,
+ *   parameters: GadgetParam[],
+ *   wasmPath: string,
+ *   packageSetPath: string,
+ *   autoReloadMs?: number
+ * }} DiagramProps
  * @typedef {{ kind: string, value?: number, label?: string }} HitInfo
  * @typedef {(number | string | boolean)} ParamValue
+ * @typedef {"rpc" | "vir"} HitBackend
  */
 
 /**
@@ -97,6 +112,7 @@ function renderControl(p, i, values, setValues) {
  */
 export default function (props) {
     var rs = useRpcSession();
+    var rpcRef = React.useRef(rs);
     var params = props.parameters || [];
     var hasParams = params.length > 0;
     /** @type {ParamValue[]} */
@@ -112,11 +128,45 @@ export default function (props) {
     var svg = _svg[0];
     var setSvg = _svg[1];
     var latestHitScene = React.useRef(props.initialHitScene || "");
+    /** @type {React.MutableRefObject<ReturnType<typeof createVirHitSceneController> | null>} */
+    var virControllerRef = React.useRef(null);
+    var _backend = React.useState(/** @type {HitBackend} */ ("vir"));
+    var backend = _backend[0];
+    var setBackend = _backend[1];
+    var backendRef = React.useRef(backend);
+    var _virStatus = React.useState("loading");
+    var virStatus = _virStatus[0];
+    var setVirStatus = _virStatus[1];
+    var _revision = React.useState("");
+    var revision = _revision[0];
+    var setRevision = _revision[1];
+
+    React.useEffect(
+        function () {
+            rpcRef.current = rs;
+        },
+        [rs],
+    );
+
+    React.useEffect(
+        function () {
+            backendRef.current = backend;
+        },
+        [backend],
+    );
+
     // Reset SVG when switching to a different diagram
     React.useEffect(
         function () {
             setSvg(props.initialSvg || "");
             latestHitScene.current = props.initialHitScene || "";
+            try {
+                virControllerRef.current?.replace(latestHitScene.current);
+            } catch (error) {
+                setVirStatus(error instanceof Error ? error.message : String(error));
+                backendRef.current = "rpc";
+                setBackend("rpc");
+            }
         },
         [props.exprId],
     );
@@ -136,6 +186,75 @@ export default function (props) {
     var pixelWidth = _pw[0];
     var setPixelWidth = _pw[1];
     var latestPixelWidth = React.useRef(0);
+
+    // Watch staged VIR assets only while VIR is requested. Missing assets fall back to RPC.
+    React.useEffect(
+        function () {
+            if (backend !== "vir") return undefined;
+            var disposed = false;
+            /** @type {ReturnType<typeof setInterval> | null} */
+            var interval = null;
+            setVirStatus("loading");
+            var check = function () {
+                statVirRuntimeRevision(rpcRef.current, props.wasmPath, props.packageSetPath)
+                    .then(function (nextRevision) {
+                        if (!disposed) setRevision(nextRevision);
+                    })
+                    .catch(function (error) {
+                        if (disposed) return;
+                        setVirStatus(error instanceof Error ? error.message : String(error));
+                        backendRef.current = "rpc";
+                        setBackend("rpc");
+                    });
+            };
+            check();
+            var reloadMs = props.autoReloadMs || 0;
+            if (reloadMs > 0) interval = setInterval(check, reloadMs);
+            return function () {
+                disposed = true;
+                if (interval !== null) clearInterval(interval);
+            };
+        },
+        [backend, props.wasmPath, props.packageSetPath, props.autoReloadMs],
+    );
+
+    // Own one retained HitScene controller while the VIR backend is active.
+    React.useEffect(
+        function () {
+            if (backend !== "vir" || revision === "") return undefined;
+            var disposed = false;
+            /** @type {Awaited<ReturnType<typeof acquireVirRuntimeService>> | null} */
+            var service = null;
+            /** @type {ReturnType<typeof createVirHitSceneController> | null} */
+            var controller = null;
+            setVirStatus("loading");
+            acquireVirRuntimeService(rpcRef.current, props.wasmPath, props.packageSetPath)
+                .then(function (loaded) {
+                    if (disposed) {
+                        releaseVirRuntimeService(loaded);
+                        return;
+                    }
+                    service = loaded;
+                    controller = createVirHitSceneController(loaded.runtime);
+                    controller.replace(latestHitScene.current);
+                    virControllerRef.current = controller;
+                    setVirStatus("ready");
+                })
+                .catch(function (error) {
+                    if (disposed) return;
+                    setVirStatus(error instanceof Error ? error.message : String(error));
+                    backendRef.current = "rpc";
+                    setBackend("rpc");
+                });
+            return function () {
+                disposed = true;
+                if (virControllerRef.current === controller) virControllerRef.current = null;
+                controller?.dispose();
+                if (service !== null) releaseVirRuntimeService(service);
+            };
+        },
+        [backend, revision, props.wasmPath, props.packageSetPath],
+    );
 
     // Measure container width immediately on mount and on subsequent resizes
     React.useEffect(function () {
@@ -167,14 +286,26 @@ export default function (props) {
             latestValues.current = values;
             if (timer.current) clearTimeout(timer.current);
             timer.current = setTimeout(function () {
-                rs.call("Illuminate.evalParamDiagram", {
-                    id: props.exprId,
-                    values: latestValues.current,
-                    pixelWidth: latestPixelWidth.current,
-                })
+                rpcRef.current
+                    .call("Illuminate.evalParamDiagram", {
+                        id: props.exprId,
+                        values: latestValues.current,
+                        pixelWidth: latestPixelWidth.current,
+                    })
                     .then(function (/** @type {{ svg: string, hitScene: string }} */ resp) {
-                        setSvg(resp.svg);
                         latestHitScene.current = resp.hitScene;
+                        if (virControllerRef.current !== null) {
+                            try {
+                                virControllerRef.current.replace(resp.hitScene);
+                            } catch (error) {
+                                setVirStatus(
+                                    error instanceof Error ? error.message : String(error),
+                                );
+                                backendRef.current = "rpc";
+                                setBackend("rpc");
+                            }
+                        }
+                        setSvg(resp.svg);
                     })
                     .catch(function (/** @type {unknown} */ err) {
                         console.error("RPC error:", err);
@@ -207,11 +338,24 @@ export default function (props) {
             var diagY = -svgY;
             if (hitTimer.current) clearTimeout(hitTimer.current);
             hitTimer.current = setTimeout(function () {
-                rs.call("Illuminate.hitTestPreparedDiagram", {
-                    id: props.exprId,
-                    x: diagX,
-                    y: diagY,
-                })
+                var controller = virControllerRef.current;
+                if (backendRef.current === "vir" && controller !== null) {
+                    try {
+                        setHitInfo(controller.query(diagX, diagY));
+                    } catch (error) {
+                        setVirStatus(error instanceof Error ? error.message : String(error));
+                        backendRef.current = "rpc";
+                        setBackend("rpc");
+                        setHitInfo(null);
+                    }
+                    return;
+                }
+                rpcRef.current
+                    .call("Illuminate.hitTestPreparedDiagram", {
+                        id: props.exprId,
+                        x: diagX,
+                        y: diagY,
+                    })
                     .then(function (/** @type {HitInfo} */ resp) {
                         setHitInfo(resp);
                     })
@@ -226,6 +370,12 @@ export default function (props) {
     var onMouseLeave = React.useCallback(function () {
         if (hitTimer.current) clearTimeout(hitTimer.current);
         setHitInfo(null);
+    }, []);
+
+    React.useEffect(function () {
+        return function () {
+            if (hitTimer.current) clearTimeout(hitTimer.current);
+        };
     }, []);
 
     // Format hit info for display
@@ -250,7 +400,49 @@ export default function (props) {
     return e(
         "div",
         { style: { padding: "4px", background: "white", position: "relative" } },
-        controls ? e("div", { style: { marginBottom: "8px" } }, controls) : null,
+        e(
+            "div",
+            {
+                style: {
+                    display: "flex",
+                    gap: "8px",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    marginBottom: "6px",
+                },
+            },
+            controls ? e("div", { style: { flex: "1 1 auto" } }, controls) : e("span"),
+            e(
+                "label",
+                { style: { color: "#596275", fontSize: "10px", whiteSpace: "nowrap" } },
+                "Hit testing ",
+                e(
+                    "select",
+                    {
+                        value: backend,
+                        onChange: function (
+                            /** @type {React.ChangeEvent<HTMLSelectElement>} */ event,
+                        ) {
+                            var nextBackend = /** @type {HitBackend} */ (event.target.value);
+                            backendRef.current = nextBackend;
+                            setBackend(nextBackend);
+                        },
+                        style: { fontSize: "10px" },
+                        title: backend === "vir" ? virStatus : "Lean server RPC",
+                    },
+                    e(
+                        "option",
+                        { value: "vir" },
+                        virStatus === "ready"
+                            ? "VIR (in-browser Lean)"
+                            : virStatus === "loading"
+                              ? "VIR (loading)"
+                              : "VIR (unavailable)",
+                    ),
+                    e("option", { value: "rpc" }, "Lean server RPC"),
+                ),
+            ),
+        ),
         e("div", {
             ref: svgRef,
             style: { width: "100%" },

@@ -63,6 +63,34 @@
                     800 14px ui-monospace,
                     monospace;
             }
+            .live-runner {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                align-items: center;
+                margin: 0 0 18px;
+                padding: 14px 16px;
+                border: 1px solid #2b3d65;
+                border-radius: 12px;
+                background: rgb(12 20 39 / 0.82);
+            }
+            .live-runner button {
+                padding: 8px 12px;
+                border: 0;
+                border-radius: 8px;
+                color: #091126;
+                background: #89aaff;
+                font-weight: 800;
+                cursor: pointer;
+            }
+            .live-runner button:disabled {
+                cursor: wait;
+                opacity: 0.55;
+            }
+            .live-runner span {
+                color: #91a2c4;
+                font-size: 11px;
+            }
             .backend-cards {
                 display: grid;
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -228,6 +256,72 @@
             .notes {
                 margin-bottom: 50px;
             }
+            .workload-grid {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+                gap: 12px;
+            }
+            .workload-card {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 10px;
+                padding: 14px;
+                border: 1px solid #293b61;
+                border-radius: 11px;
+                background: #0c162c;
+            }
+            .workload-title,
+            .workload-bar,
+            .query-classes {
+                grid-column: 1 / -1;
+            }
+            .workload-title {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+            }
+            .workload-bar {
+                height: 7px;
+                overflow: hidden;
+                border-radius: 999px;
+                background: #070e1d;
+            }
+            .workload-bar i {
+                display: block;
+                height: 100%;
+                border-radius: inherit;
+                background: linear-gradient(90deg, #6d96ff, #ad7cff);
+            }
+            .query-classes {
+                display: grid;
+                gap: 5px;
+                margin-top: 3px;
+            }
+            .query-class {
+                display: grid;
+                grid-template-columns: 78px minmax(30px, 1fr) 62px;
+                gap: 7px;
+                align-items: center;
+                color: #8799bc;
+                font:
+                    9px ui-monospace,
+                    monospace;
+            }
+            .query-class > i {
+                height: 5px;
+                overflow: hidden;
+                border-radius: 999px;
+                background: #070e1d;
+            }
+            .query-class b {
+                display: block;
+                height: 100%;
+                border-radius: inherit;
+                background: #5e7fce;
+            }
+            .query-class output {
+                text-align: right;
+            }
             .notes ul {
                 margin: 0;
                 padding-left: 20px;
@@ -239,6 +333,9 @@
                 .backend-cards {
                     grid-template-columns: 1fr;
                 }
+                .workload-grid {
+                    grid-template-columns: 1fr;
+                }
             }
         </style>
     </head>
@@ -247,14 +344,23 @@
             <p class="eyebrow">Illuminate runtime laboratory</p>
             <h1>HitScene performance</h1>
             <p class="lede">
-                The same retained scene and 301 bit-exact geometry queries, measured through VIR and
-                FIR. Production wall time is kept separate from detailed runtime profiling.
+                Illuminate’s JavaScript widget does not contain a separate geometry algorithm: it
+                asks the Lean server to hit-test through InfoView RPC. This laboratory keeps those
+                Lean semantics as the source of truth and compares browser-resident Lean through VIR
+                and FIR. Production wall time is kept separate from detailed runtime profiling.
             </p>
         </header>
         <main>
             <div class="status" data-status>
                 <span data-generated>Loading the latest measurement…</span>
                 <strong data-headline-ratio>—</strong>
+            </div>
+            <div class="live-runner">
+                <button type="button" data-run-live>Run live browser comparison</button>
+                <span data-live-status>
+                    The stored report loads automatically; this button measures again in this tab.
+                    Lean RPC remains an InfoView-only baseline.
+                </span>
             </div>
             <section class="backend-cards" data-backend-cards></section>
             <section class="details">
@@ -264,6 +370,14 @@
                     VIR and FIR bars on the same local scale.
                 </p>
                 <div class="phase-grid" data-phase-grid></div>
+            </section>
+            <section class="details">
+                <h2>VIR execution by workload</h2>
+                <p>
+                    A separate diagnostic run contrasts small bounds, mixed geometry, and a large
+                    path-heavy retained scene. Bars share one scale across all three workloads.
+                </p>
+                <div class="workload-grid" data-workloads></div>
             </section>
             <section class="notes">
                 <h2>Measurement notes</h2>

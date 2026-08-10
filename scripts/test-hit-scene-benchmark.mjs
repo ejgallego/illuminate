@@ -3,12 +3,15 @@ import assert from "node:assert/strict";
 import {
     float64ToBits,
     loadHitSceneBenchmark,
+    loadHitSceneBenchmarkSuite,
     runPairedHitSceneBenchmark,
 } from "./lib/hit-scene-benchmark.mjs";
 
 const fixture = await loadHitSceneBenchmark("test_output/hit-scene-benchmark.json");
 assert.equal(fixture.schemaVersion, "illuminate.hit-scene-benchmark/v1");
 assert.equal(fixture.referenceQueryCount, 296);
+assert.equal(fixture.name, "mixed-medium");
+assert.equal(fixture.geometryClass, "mixed");
 assert.equal(fixture.queries.length, 301);
 assert.ok(fixture.encodedScene.length > 100);
 assert.equal(typeof fixture.parsedScene.tree.kind, "string");
@@ -98,6 +101,25 @@ assert.equal(results.candidate.samples.length, fixture.queries.length * 2);
 assert.equal(created.length, 2);
 assert.deepEqual(disposed, created.toReversed());
 
+const suite = await loadHitSceneBenchmarkSuite("test_output/hit-scene-benchmark-suite.json");
+assert.deepEqual(
+    suite.fixtures.map(({ name }) => name),
+    ["bounds-small", "mixed-medium", "paths-large"],
+);
+assert.deepEqual(
+    suite.fixtures.map(({ geometryClass }) => geometryClass),
+    ["bounds", "mixed", "paths"],
+);
+assert.ok(suite.fixtures[0].encodedScene.length < suite.fixtures[1].encodedScene.length);
+assert.ok(suite.fixtures[1].encodedScene.length < suite.fixtures[2].encodedScene.length);
+assert.ok(suite.fixtures[0].queries.length < suite.fixtures[1].queries.length);
+assert.ok(suite.fixtures[1].queries.length < suite.fixtures[2].queries.length);
+for (const tier of suite.fixtures) {
+    assert.ok(tier.queries.every(({ queryClass }) => queryClass !== "unclassified"));
+    assert.ok(tier.queries.every(({ resultClass }) => resultClass !== ""));
+}
+
 console.log(
-    `hit-scene benchmark fixture passed: ${fixture.queries.length} oracle queries, ${fixture.encodedScene.length} encoded bytes`,
+    `hit-scene benchmark fixture passed: ${fixture.queries.length} oracle queries, ` +
+        `${suite.fixtures.length} workload tiers`,
 );
