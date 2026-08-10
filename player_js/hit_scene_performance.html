@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Illuminate HitScene performance</title>
+        <style>
+            :root {
+                color-scheme: dark;
+                font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+                color: #edf2ff;
+                background: #0a1020;
+            }
+            * {
+                box-sizing: border-box;
+            }
+            body {
+                margin: 0;
+                min-width: 320px;
+                background: radial-gradient(circle at 18% 0%, #19305d 0, #0a1020 46rem);
+            }
+            header,
+            main {
+                width: min(1160px, calc(100% - 36px));
+                margin: auto;
+            }
+            header {
+                padding: 54px 0 28px;
+            }
+            .eyebrow {
+                margin: 0 0 10px;
+                color: #84a9ff;
+                font-size: 12px;
+                font-weight: 800;
+                letter-spacing: 0.16em;
+                text-transform: uppercase;
+            }
+            h1 {
+                margin: 0;
+                font-size: clamp(36px, 6vw, 68px);
+                letter-spacing: -0.05em;
+                line-height: 0.95;
+            }
+            .lede {
+                max-width: 760px;
+                margin: 20px 0 0;
+                color: #aebbd8;
+                line-height: 1.6;
+            }
+            .status {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 12px;
+                align-items: center;
+                justify-content: space-between;
+                margin: 24px 0 18px;
+                color: #8799bc;
+                font-size: 12px;
+            }
+            .status strong {
+                color: #9eb9ff;
+                font:
+                    800 14px ui-monospace,
+                    monospace;
+            }
+            .backend-cards {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 16px;
+            }
+            .backend-card,
+            .details,
+            .notes {
+                padding: 20px;
+                border: 1px solid #2b3d65;
+                border-radius: 15px;
+                background: rgb(17 26 48 / 0.94);
+                box-shadow: 0 20px 48px rgb(0 0 0 / 0.2);
+            }
+            .backend-card {
+                display: grid;
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                gap: 12px 18px;
+            }
+            .backend-title,
+            .relative-bar,
+            .relative-label,
+            .empty {
+                grid-column: 1 / -1;
+            }
+            .backend-title {
+                display: flex;
+                gap: 12px;
+                align-items: center;
+                justify-content: space-between;
+                margin-bottom: 4px;
+            }
+            h2,
+            h3 {
+                margin: 0;
+            }
+            h2 {
+                font-size: 17px;
+            }
+            .badge {
+                padding: 4px 7px;
+                border-radius: 999px;
+                color: #89e5c4;
+                background: #173d38;
+                font-size: 9px;
+                font-weight: 800;
+                letter-spacing: 0.08em;
+                text-transform: uppercase;
+            }
+            .unavailable {
+                opacity: 0.62;
+            }
+            .unavailable .badge {
+                color: #d4b975;
+                background: #40351d;
+            }
+            .metric small,
+            .phase-column small {
+                display: block;
+                color: #8393b5;
+                font-size: 9px;
+                letter-spacing: 0.06em;
+                text-transform: uppercase;
+            }
+            .metric strong {
+                display: block;
+                margin-top: 3px;
+                font:
+                    750 18px ui-monospace,
+                    monospace;
+            }
+            .relative-bar {
+                height: 8px;
+                overflow: hidden;
+                margin-top: 6px;
+                border-radius: 999px;
+                background: #0a1225;
+            }
+            .relative-bar i {
+                display: block;
+                height: 100%;
+                border-radius: inherit;
+                background: #6d96ff;
+            }
+            .fir .relative-bar i {
+                background: #5bd6aa;
+            }
+            .relative-label {
+                color: #9eb0d0;
+                font:
+                    700 11px ui-monospace,
+                    monospace;
+                text-align: right;
+            }
+            .empty {
+                color: #8799bc;
+                line-height: 1.5;
+            }
+            .details,
+            .notes {
+                margin-top: 18px;
+            }
+            .details > p,
+            .notes > p {
+                margin: 5px 0 18px;
+                color: #8799bc;
+                font-size: 11px;
+            }
+            .phase-grid {
+                display: grid;
+                grid-template-columns: repeat(6, minmax(110px, 1fr));
+                gap: 12px;
+                overflow-x: auto;
+            }
+            .phase-group {
+                display: grid;
+                grid-template-rows: 150px auto;
+                gap: 8px;
+                min-width: 110px;
+            }
+            .phase-bars {
+                display: flex;
+                gap: 8px;
+                align-items: stretch;
+                justify-content: center;
+                padding: 6px 5px 0;
+                border-bottom: 1px solid #34476f;
+            }
+            .phase-column {
+                display: grid;
+                grid-template-rows: 18px minmax(0, 1fr) 14px;
+                gap: 4px;
+                width: min(44%, 48px);
+                text-align: center;
+            }
+            .phase-column output {
+                color: #aebbd8;
+                font:
+                    8px ui-monospace,
+                    monospace;
+                white-space: nowrap;
+            }
+            .phase-column i {
+                display: flex;
+                align-items: end;
+                justify-content: stretch;
+            }
+            .phase-column b {
+                display: block;
+                width: 100%;
+                min-height: 1px;
+                border-radius: 5px 5px 1px 1px;
+                background: #6d96ff;
+            }
+            .phase-column.fir b {
+                background: #5bd6aa;
+            }
+            .phase-group h3 {
+                color: #b9c5df;
+                font-size: 10px;
+                text-align: center;
+            }
+            .notes {
+                margin-bottom: 50px;
+            }
+            .notes ul {
+                margin: 0;
+                padding-left: 20px;
+                color: #9caaca;
+                font-size: 11px;
+                line-height: 1.6;
+            }
+            @media (max-width: 720px) {
+                .backend-cards {
+                    grid-template-columns: 1fr;
+                }
+            }
+        </style>
+    </head>
+    <body data-ready="false">
+        <header>
+            <p class="eyebrow">Illuminate runtime laboratory</p>
+            <h1>HitScene performance</h1>
+            <p class="lede">
+                The same retained scene and 301 bit-exact geometry queries, measured through VIR and
+                FIR. Production wall time is kept separate from detailed runtime profiling.
+            </p>
+        </header>
+        <main>
+            <div class="status" data-status>
+                <span data-generated>Loading the latest measurement…</span>
+                <strong data-headline-ratio>—</strong>
+            </div>
+            <section class="backend-cards" data-backend-cards></section>
+            <section class="details">
+                <h2>Detailed runtime phases</h2>
+                <p>
+                    Median instrumented durations from a separate diagnostic pass. Each group has
+                    VIR and FIR bars on the same local scale.
+                </p>
+                <div class="phase-grid" data-phase-grid></div>
+            </section>
+            <section class="notes">
+                <h2>Measurement notes</h2>
+                <p>The raw samples and environment metadata remain in the JSON report.</p>
+                <ul data-caveats></ul>
+            </section>
+        </main>
+        <script type="module" src="./hit-scene-performance.js"></script>
+    </body>
+</html>

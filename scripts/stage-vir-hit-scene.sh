@@ -14,8 +14,6 @@ if [ ! -d "$vir_root/node_modules" ]; then
   npm --prefix "$vir_root" install
 fi
 
-npm --prefix "$repo_root" run build:vir-widget
-
 if [ ! -d "$vir_root/third_party/lean4-src/.git" ]; then
   npm --prefix "$vir_root" run fetch:lean
 fi
@@ -50,20 +48,21 @@ else
 fi
 
 cd "$repo_root"
-lake build +Illuminate.Animation.Vir:vir
+lake build +Illuminate.Diagram.HitScene.Vir:vir
 
 VIR_SDK_ARCHIVE="$sdk_archive" lake build :virSdk
 
 stage_root="$repo_root/test_output/vir"
 sdk_source="$repo_root/.lake/build/vir/sdk"
-package_set_source="$repo_root/.lake/build/vir/module-sets/Illuminate/Animation"
-package_set_dir="$stage_root/module-sets/Illuminate/Animation"
+package_set_source="$repo_root/.lake/build/vir/module-sets/Illuminate/Diagram/HitScene"
+package_set_dir="$stage_root/module-sets/Illuminate/Diagram/HitScene"
 
-rm -rf "$stage_root/sdk" "$stage_root/modules" "$package_set_dir"
+mkdir -p "$stage_root" "$package_set_dir"
+rm -rf "$stage_root/sdk" "$package_set_dir"
 mkdir -p "$stage_root/sdk" "$package_set_dir"
 cp -R "$sdk_source/." "$stage_root/sdk/"
 cp "$package_set_source/Vir.irpkg-set.json" "$package_set_dir/Vir.irpkg-set.json"
 cp "$package_set_source/Vir.irpkg" "$package_set_dir/Vir.irpkg"
 cp -R "$package_set_source/Vir.parts" "$package_set_dir/Vir.parts"
 
-echo "staged Illuminate VIR player assets under test_output/vir"
+echo "staged Illuminate VIR hit-scene assets under test_output/vir"

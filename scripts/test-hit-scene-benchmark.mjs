@@ -82,6 +82,7 @@ const results = await runPairedHitSceneBenchmark(
     {
         warmupRounds: 1,
         measuredRounds: 2,
+        retainSamples: true,
         now() {
             clock += 0.001;
             return clock;
@@ -92,6 +93,8 @@ assert.equal(results.rpc.query.count, fixture.queries.length * 2);
 assert.equal(results.candidate.query.count, fixture.queries.length * 2);
 assert.ok(results.rpc.creationMs > 0);
 assert.ok(results.candidate.query.medianMs > 0);
+assert.equal(results.rpc.samples.length, fixture.queries.length * 2);
+assert.equal(results.candidate.samples.length, fixture.queries.length * 2);
 assert.equal(created.length, 2);
 assert.deepEqual(disposed, created.toReversed());
 

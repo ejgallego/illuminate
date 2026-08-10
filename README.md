@@ -579,6 +579,22 @@ ILLUMINATE_FIR_LIVE_PLAYER_DIR=/absolute/immutable/package \
 npm run measure:live-dashboard
 ```
 
+Prepared diagram hit testing has a smaller runtime-focused comparison.
+It mounts the same generated `HitScene` once in VIR and FIR, then runs
+301 bit-exact geometry queries in balanced warm-up and measurement
+rounds. Production wall-clock samples and detailed runtime phases are
+collected in separate passes:
+
+```sh
+ILLUMINATE_FIR_HIT_SCENE_DIR=/absolute/immutable/package \
+  npm run demo:hit-scene
+```
+
+Without the FIR variable, the page remains useful as a VIR baseline
+and marks FIR as pending. The raw report is written to
+`test_output/hit-scene-performance.json`; the visual report is at
+<http://127.0.0.1:8765/hit-scene-performance.html>.
+
 The live-dashboard measurement runs every backend with the detailed
 host observer both disabled and enabled. Each pair shares one fresh
 page and runtime, resets all callback metrics between modes, and

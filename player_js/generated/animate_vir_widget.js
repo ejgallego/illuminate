@@ -519,6 +519,8 @@ function asError(error) {
 
 // vir/web/src/runtime/callbacks.js
 var virCallbackStates = /* @__PURE__ */ new WeakMap();
+var virCallbackRootTrackers = /* @__PURE__ */ new WeakMap();
+var virCallbackFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((lease) => finalizeVirCallbackLease(lease)) : null;
 var VirCallback = class {
   call(...args) {
     const state = requireVirCallbackState(this);
@@ -542,14 +544,7 @@ var VirCallback = class {
     return createVirCallbackLease(state.root);
   }
   release() {
-    const state = requireVirCallbackState(this);
-    if (state.released || state.root.released) return false;
-    state.released = true;
-    state.root.leases.delete(this);
-    if (state.root.leases.size === 0) {
-      releaseVirCallbackRoot(state.root);
-    }
-    return true;
+    return releaseVirCallbackLease(requireVirCallbackState(this));
   }
   dispose() {
     return this.release();
@@ -572,22 +567,46 @@ function createVirCallback(runtime, rootId, type) {
     tracker: null,
     released: false
   };
+  const tracker = Object.freeze({});
+  root.tracker = tracker;
+  virCallbackRootTrackers.set(tracker, root);
   const callback = createVirCallbackLease(root);
-  root.tracker = callback;
-  runtime.trackCallback(callback);
+  runtime.trackCallback(tracker);
   return callback;
 }
 function createVirCallbackLease(root) {
+  const lease = {
+    root,
+    released: false
+  };
   const callback = function virCallback(...args) {
     return callback.call(...args);
   };
   Object.setPrototypeOf(callback, VirCallback.prototype);
-  virCallbackStates.set(callback, {
-    root,
-    released: false
-  });
-  root.leases.add(callback);
+  virCallbackStates.set(callback, lease);
+  root.leases.add(lease);
+  virCallbackFinalizer?.register(callback, lease, lease);
   return callback;
+}
+function releaseVirCallbackLease(lease, { unregister = true } = {}) {
+  if (lease.released || lease.root.released) return false;
+  lease.released = true;
+  if (unregister) virCallbackFinalizer?.unregister(lease);
+  lease.root.leases.delete(lease);
+  if (lease.root.leases.size === 0) {
+    releaseVirCallbackRoot(lease.root);
+  }
+  return true;
+}
+function finalizeVirCallbackLease(lease) {
+  try {
+    releaseVirCallbackLease(lease, { unregister: false });
+  } catch (error) {
+    try {
+      lease.root.runtime.hostState?.recordFinalizerError(error);
+    } catch {
+    }
+  }
 }
 function takeCallbackLease(callback, label = "Vir callback") {
   if (typeof callback !== "function" || typeof callback.release !== "function") {
@@ -596,13 +615,7 @@ function takeCallbackLease(callback, label = "Vir callback") {
   if (typeof callback.retain !== "function") {
     return callback;
   }
-  const lease = callback.retain();
-  if (lease === callback || typeof lease !== "function" || typeof lease.release !== "function") {
-    if (lease !== callback && typeof lease?.release === "function") {
-      lease.release();
-    }
-    throw new Error(`${label}.retain() must return a distinct releasable function`);
-  }
+  const lease = retainCallbackLease(callback, label);
   try {
     callback.release();
   } catch (error) {
@@ -612,11 +625,27 @@ function takeCallbackLease(callback, label = "Vir callback") {
   }
   return lease;
 }
+function retainCallbackLease(callback, label = "Vir callback") {
+  if (typeof callback !== "function" || typeof callback.release !== "function") {
+    throw new Error(`${label} must be a releasable function`);
+  }
+  if (typeof callback.retain !== "function") {
+    throw new Error(`${label} must support retain() for independent ownership`);
+  }
+  const lease = callback.retain();
+  if (lease === callback || typeof lease !== "function" || typeof lease.release !== "function") {
+    if (lease !== callback && typeof lease?.release === "function") {
+      lease.release();
+    }
+    throw new Error(`${label}.retain() must return a distinct releasable function`);
+  }
+  return lease;
+}
 function releaseCallbackRoots(callbacks) {
   const pending = takeCallbacks(callbacks);
   const roots = /* @__PURE__ */ new Set();
-  for (const callback of pending) {
-    roots.add(requireVirCallbackState(callback).root);
+  for (const callbackOrTracker of pending) {
+    roots.add(requireVirCallbackRoot(callbackOrTracker));
   }
   const errors = [];
   for (const root of roots) {
@@ -627,11 +656,9 @@ function releaseCallbackRoots(callbacks) {
 function releaseVirCallbackRoot(root) {
   if (root.released) return false;
   root.released = true;
-  for (const callback of root.leases) {
-    const state = virCallbackStates.get(callback);
-    if (state !== void 0) {
-      state.released = true;
-    }
+  for (const lease of root.leases) {
+    lease.released = true;
+    virCallbackFinalizer?.unregister(lease);
   }
   root.leases.clear();
   const errors = [];
@@ -639,6 +666,11 @@ function releaseVirCallbackRoot(root) {
   collectCleanupError(errors, () => root.runtime.untrackCallback(root.tracker));
   throwCollectedErrors(errors, "Vir callback root release failed");
   return true;
+}
+function requireVirCallbackRoot(callbackOrTracker) {
+  const trackedRoot = virCallbackRootTrackers.get(callbackOrTracker);
+  if (trackedRoot !== void 0) return trackedRoot;
+  return requireVirCallbackState(callbackOrTracker).root;
 }
 function takeCallbacks(callbacks) {
   const pending = Array.from(callbacks);
@@ -874,11 +906,18 @@ function normalizeUint32(value, label) {
 
 // vir/web/src/host-resource.js
 var EXTERNREF_TABLE_INITIAL_LENGTH = 1;
+var HOST_RESOURCE_RETENTION = Object.freeze({
+  MOVE_ONLY: "move-only",
+  PASSIVE: "passive",
+  RETAINABLE: "retainable"
+});
 var VIR_HOST_DISPOSE = /* @__PURE__ */ Symbol.for("lean-vir.hostDispose");
 var VIR_HOST_RESOLVE_BINDING = /* @__PURE__ */ Symbol.for("lean-vir.hostResolveBinding");
 var hostResourceState = /* @__PURE__ */ new WeakMap();
+var hostResourceTicketState = /* @__PURE__ */ new WeakMap();
 var hostResourceOwnerState = /* @__PURE__ */ new WeakMap();
 var hostResourcePayloadLifetimes = /* @__PURE__ */ new WeakMap();
+var hostResourceFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((ticket) => finalizeHostResourceTicket(ticket)) : null;
 var externrefTableSupport = null;
 function hasExternrefTableSupport() {
   if (externrefTableSupport !== null) {
@@ -902,12 +941,72 @@ function requireExternrefTableSupport() {
     throw new Error("Lean VIR React/browser host resources require WebAssembly externref support");
   }
 }
+function hasHostResourceFinalizationSupport() {
+  return hostResourceFinalizer !== null && typeof WeakRef === "function";
+}
 var HostResource = class {
-  constructor(value, label, { dispose = null, owner = null } = {}) {
-    hostResourceState.set(this, { value, label, dispose, owner });
+  constructor(value, label, {
+    dispose = null,
+    owner = null,
+    onAbandon = null,
+    onFinalize = null,
+    onRelease = null,
+    onTake = null,
+    reportFinalizerError = null,
+    retainResource = null,
+    retentionPolicy = null,
+    revocationGroup = null
+  } = {}) {
+    const ticket = Object.freeze({});
+    const metadata = Object.freeze({
+      retentionPolicy: normalizeHostResourceRetentionPolicy(value, retentionPolicy, {
+        dispose,
+        onAbandon,
+        onFinalize,
+        onRelease,
+        onTake
+      }),
+      retainResource,
+      revocationGroup
+    });
+    const state = {
+      value,
+      label,
+      dispose,
+      owner,
+      onAbandon,
+      onFinalize,
+      onRelease,
+      onTake,
+      reportFinalizerError,
+      ticket,
+      metadata
+    };
+    hostResourceState.set(this, state);
+    hostResourceTicketState.set(ticket, state);
+    if (typeof dispose === "function" || typeof onFinalize === "function") {
+      hostResourceFinalizer?.register(this, ticket, ticket);
+    }
     Object.freeze(this);
   }
+  release() {
+    return releaseHostResource(this);
+  }
+  dispose() {
+    return releaseHostResource(this);
+  }
+  [VIR_HOST_DISPOSE]() {
+    return releaseHostResource(this);
+  }
 };
+if (typeof Symbol.dispose === "symbol") {
+  Object.defineProperty(HostResource.prototype, Symbol.dispose, {
+    configurable: true,
+    value() {
+      return releaseHostResource(this);
+    }
+  });
+}
 function createHostResourceOwner(label = "host resource owner") {
   const owner = Object.freeze({});
   hostResourceOwnerState.set(owner, { label, phase: "active" });
@@ -986,102 +1085,255 @@ function retainHostResource(resource, label = null) {
   const source = normalizeHostResource(resource, label ?? "host resource");
   const state = hostResourceState.get(source);
   const value = state.value;
-  if (!isRetainableHostResourcePayload(value)) {
-    return createHostResource(value, label ?? state.label, { owner: state.owner });
+  if (state.metadata.retentionPolicy === HOST_RESOURCE_RETENTION.MOVE_ONLY) {
+    throw new Error(`${label ?? state.label ?? "host resource"} does not support independent retain()`);
+  }
+  if (state.metadata.retentionPolicy === HOST_RESOURCE_RETENTION.PASSIVE) {
+    return createHostResource(value, label ?? state.label, {
+      owner: state.owner,
+      retentionPolicy: HOST_RESOURCE_RETENTION.PASSIVE
+    });
+  }
+  if (typeof state.metadata.retainResource === "function") {
+    return state.metadata.retainResource(value, label ?? state.label);
   }
   const retained = retainHostResourcePayload(value);
   try {
     return createHostResource(retained, label ?? state.label, {
       owner: state.owner,
-      dispose: () => releaseHostResourcePayload(retained)
+      dispose: () => releaseHostResourcePayload(retained),
+      reportFinalizerError: state.reportFinalizerError
     });
   } catch (error) {
-    releaseHostResourcePayload(retained);
-    throw error;
+    const errors = [asError2(error)];
+    try {
+      releaseHostResourcePayload(retained);
+    } catch (cleanupError) {
+      errors.push(asError2(cleanupError));
+    }
+    throwHostResourceErrors(errors, "host resource retain failed during ownership rollback");
   }
 }
 function releaseHostResource(resource) {
   const state = hostResourceState.get(resource);
-  if (state !== void 0) {
-    const value = state.value;
-    state.value = null;
-    const dispose = state.dispose;
-    state.dispose = null;
-    if (value !== null && value !== void 0 && typeof dispose === "function") {
-      dispose(value);
+  if (state === void 0 || state.value === null || state.value === void 0) return false;
+  hostResourceFinalizer?.unregister(state.ticket);
+  return releaseHostResourceState(state, resource);
+}
+function abandonHostResource(resource) {
+  const state = hostResourceState.get(resource);
+  if (state === void 0 || state.value === null || state.value === void 0) return false;
+  const onAbandon = state.onAbandon;
+  state.onAbandon = null;
+  const errors = [];
+  if (typeof onAbandon === "function") {
+    try {
+      onAbandon(state.value);
+    } catch (error) {
+      errors.push(asError2(error));
     }
   }
+  try {
+    releaseHostResource(resource);
+  } catch (error) {
+    errors.push(asError2(error));
+  }
+  throwHostResourceErrors(errors, "host resource abandonment failed");
+  return true;
+}
+function commitHostResource(resource) {
+  const state = hostResourceState.get(resource);
+  if (state === void 0 || state.value === null || state.value === void 0) return false;
+  state.onAbandon = null;
+  return true;
+}
+function hostResourceReleaseTicket(resource) {
+  const state = hostResourceState.get(resource);
+  if (state === void 0 || state.value === null || state.value === void 0) return null;
+  return state.ticket;
+}
+function releaseHostResourceTicket(ticket) {
+  const state = hostResourceTicketState.get(ticket);
+  if (state === void 0 || state.value === null || state.value === void 0) return false;
+  hostResourceFinalizer?.unregister(ticket);
+  return releaseHostResourceState(state, null);
+}
+function transferHostResource(resource) {
+  const state = hostResourceState.get(resource);
+  if (state === void 0 || state.value === null || state.value === void 0) return false;
+  const onTake = state.onTake;
+  if (typeof onTake === "function") onTake(resource);
+  state.onTake = null;
+  return true;
 }
 var ExternrefResourceRoots = class {
   constructor({ initial = EXTERNREF_TABLE_INITIAL_LENGTH } = {}) {
     requireExternrefTableSupport();
-    this.table = new WebAssembly.Table({ element: "externref", initial });
+    if (!Number.isInteger(initial) || initial < 1) {
+      throw new Error("externref resource root table initial length must reserve root id 0");
+    }
+    this.table = new WebAssembly.Table({ element: "externref", initial }, null);
     this.freeRootIds = [];
+    for (let rootId = initial - 1; rootId >= 1; rootId -= 1) {
+      this.freeRootIds.push(rootId);
+    }
+    this.liveRootIds = /* @__PURE__ */ new Set();
     this.ownedRootIds = /* @__PURE__ */ new Set();
-    this.activeRoots = 0;
   }
   root(value, { owned = false } = {}) {
     const resource = hostResourceExternref(value);
     if (resource === null) {
       return 0;
     }
-    const rootId = this.freeRootIds.pop() ?? this.table.grow(1);
+    const rootId = this.freeRootIds.pop() ?? this.table.grow(1, null);
     if (rootId <= 0 || rootId > 4294967295) {
       throw new Error("Lean VIR externref resource root table exceeded the 32-bit root id range");
     }
     this.table.set(rootId, resource);
+    this.liveRootIds.add(rootId);
     if (owned) {
       this.ownedRootIds.add(rootId);
     }
-    this.activeRoots++;
     return rootId;
   }
   get(rootId, { take = false } = {}) {
-    if (!Number.isInteger(rootId) || rootId <= 0 || rootId >= this.table.length) {
+    if (!Number.isInteger(rootId) || !this.liveRootIds.has(rootId)) {
       return null;
     }
     const resource = this.table.get(rootId);
-    if (resource !== null && take) {
+    if (resource !== null && take && this.ownedRootIds.has(rootId)) {
+      transferHostResource(resource);
       this.ownedRootIds.delete(rootId);
     }
     return resource;
   }
   release(rootId) {
-    if (!Number.isInteger(rootId) || rootId <= 0 || rootId >= this.table.length) {
+    if (!Number.isInteger(rootId) || !this.liveRootIds.delete(rootId)) {
       return void 0;
     }
     const resource = this.table.get(rootId);
-    if (resource === null) return void 0;
     const owned = this.ownedRootIds.delete(rootId);
     this.table.set(rootId, null);
     this.freeRootIds.push(rootId);
-    this.activeRoots--;
     if (owned) releaseHostResource(resource);
     return void 0;
   }
   clear() {
     const errors = [];
-    for (let rootId = 1; rootId < this.table.length; rootId += 1) {
+    for (const rootId of Array.from(this.liveRootIds)) {
       try {
         this.release(rootId);
       } catch (error) {
         errors.push(error instanceof Error ? error : new Error(String(error)));
       }
     }
-    this.freeRootIds.length = 0;
-    this.ownedRootIds.clear();
-    this.activeRoots = 0;
     if (errors.length === 1) throw errors[0];
     if (errors.length > 1) throw new AggregateError(errors, "externref resource root cleanup failed");
   }
   debugCounts() {
     return {
-      active: this.activeRoots,
+      active: this.liveRootIds.size,
       capacity: this.table.length - 1,
       reusable: this.freeRootIds.length
     };
   }
+  isOwned(rootId) {
+    return Number.isInteger(rootId) && this.liveRootIds.has(rootId) && this.ownedRootIds.has(rootId);
+  }
 };
+function releaseHostResourceState(state, resource) {
+  const value = state.value;
+  const dispose = state.dispose;
+  const onRelease = state.onRelease;
+  const onFinalize = state.onFinalize;
+  const ticket = state.ticket;
+  state.value = null;
+  state.dispose = null;
+  state.onAbandon = null;
+  state.onFinalize = null;
+  state.onRelease = null;
+  state.onTake = null;
+  state.reportFinalizerError = null;
+  hostResourceTicketState.delete(ticket);
+  const errors = [];
+  const transition = resource === null ? onFinalize : onRelease;
+  if (typeof transition === "function") {
+    try {
+      transition(resource);
+    } catch (error) {
+      errors.push(asError2(error));
+    }
+  }
+  if (typeof dispose === "function") {
+    try {
+      dispose(value);
+    } catch (error) {
+      errors.push(asError2(error));
+    }
+  }
+  throwHostResourceErrors(errors, "host resource release failed");
+  return true;
+}
+function finalizeHostResourceTicket(ticket) {
+  const state = hostResourceTicketState.get(ticket);
+  if (state?.value === null || state?.value === void 0) return;
+  const value = state.value;
+  const dispose = state.dispose;
+  const onFinalize = state.onFinalize;
+  const report = state.reportFinalizerError;
+  state.value = null;
+  state.dispose = null;
+  state.onAbandon = null;
+  state.onFinalize = null;
+  state.onRelease = null;
+  state.onTake = null;
+  state.reportFinalizerError = null;
+  hostResourceTicketState.delete(ticket);
+  const errors = [];
+  if (typeof onFinalize === "function") {
+    try {
+      onFinalize();
+    } catch (error) {
+      errors.push(asError2(error));
+    }
+  }
+  if (typeof dispose === "function") {
+    try {
+      dispose(value);
+    } catch (error) {
+      errors.push(asError2(error));
+    }
+  }
+  if (typeof report === "function") {
+    for (const error of errors) {
+      try {
+        report(error);
+      } catch {
+      }
+    }
+  }
+}
+function normalizeHostResourceRetentionPolicy(value, policy, lifecycle) {
+  const normalized = policy ?? (isRetainableHostResourcePayload(value) ? HOST_RESOURCE_RETENTION.RETAINABLE : hostResourceHasOwnedLifecycle(lifecycle) ? HOST_RESOURCE_RETENTION.MOVE_ONLY : HOST_RESOURCE_RETENTION.PASSIVE);
+  if (!Object.values(HOST_RESOURCE_RETENTION).includes(normalized)) {
+    throw new Error(`unsupported host resource retention policy: ${String(normalized)}`);
+  }
+  if (normalized === HOST_RESOURCE_RETENTION.RETAINABLE && !isRetainableHostResourcePayload(value)) {
+    throw new Error("retainable host resource policy requires a registered payload lifetime");
+  }
+  return normalized;
+}
+function hostResourceHasOwnedLifecycle(lifecycle) {
+  return typeof lifecycle.dispose === "function" || typeof lifecycle.onAbandon === "function" || typeof lifecycle.onFinalize === "function" || typeof lifecycle.onRelease === "function" || typeof lifecycle.onTake === "function";
+}
+function throwHostResourceErrors(errors, message) {
+  if (errors.length === 0) return;
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, message);
+}
+function asError2(error) {
+  return error instanceof Error ? error : new Error(String(error));
+}
 function hostResourceOwnerIsUsable(owner) {
   if (owner === null) return true;
   const phase = hostResourceOwnerState.get(owner)?.phase;
@@ -1492,6 +1744,7 @@ var OBJECT_VALUE_EXPORTS = [
   "vir_obj_name_string_size",
   "vir_obj_resource",
   "vir_obj_resource_externref",
+  "vir_obj_resource_is_owned",
   "vir_obj_nat",
   "vir_obj_nat_decimal",
   "vir_obj_is_scalar",
@@ -2058,7 +2311,8 @@ function createLeanObjectHandleResource(cell, label) {
       dispose: () => {
         releaseLeanObjectHandleLease(handle.lease);
         return void 0;
-      }
+      },
+      reportFinalizerError: (error) => cell.runtime.hostState?.recordFinalizerError(error)
     });
   } catch (error) {
     releaseLeanObjectHandleLease(handle.lease);
@@ -3126,22 +3380,29 @@ var ObjectValueRuntime = class {
     return value;
   }
   liftOwnedObjectResource(obj, label, ownership) {
-    const resource = this.liftObjectResource(obj, label, ownership !== null);
-    ownership?.own(() => releaseHostResource(resource));
-    return resource;
+    const lifted = this.liftObjectResourceWithOwnership(obj, label, ownership !== null);
+    if (lifted.acquired) {
+      ownership?.own(() => releaseHostResource(lifted.resource));
+    }
+    return lifted.resource;
   }
   liftObjectResource(obj, label, take = false) {
+    return this.liftObjectResourceWithOwnership(obj, label, take).resource;
+  }
+  liftObjectResourceWithOwnership(obj, label, take = false) {
+    const acquired = take && this.exports.vir_obj_resource_is_owned(obj) !== 0;
     const resource = this.exports.vir_obj_resource_externref(obj, take ? 1 : 0);
     if (isHostResource(resource) && hostResourceValue(resource) !== null) {
-      return resource;
+      return { resource, acquired };
     }
     if (this.exports.vir_obj_is_scalar(obj) === 0 && this.exports.vir_obj_tag(obj) === 0) {
       const field = this.exports.vir_obj_field(obj, 0);
       if (field !== 0) {
         try {
+          const nestedAcquired = take && this.exports.vir_obj_resource_is_owned(field) !== 0;
           const nested = this.exports.vir_obj_resource_externref(field, take ? 1 : 0);
           if (isHostResource(nested) && hostResourceValue(nested) !== null) {
-            return nested;
+            return { resource: nested, acquired: nestedAcquired };
           }
         } finally {
           this.exports.vir_obj_dec(field);
@@ -3434,7 +3695,9 @@ var MAX_UINT643 = 0xffffffffffffffffn;
 var OBJECT_CALL_UNAVAILABLE = /* @__PURE__ */ Symbol("object-call-unavailable");
 function normalizePackageSetBytes(packages) {
   if (!Array.isArray(packages) || packages.length === 0) {
-    throw new TypeError("IR package set must be a non-empty array ordered dependencies first, root last");
+    throw new TypeError(
+      "IR package set must be a non-empty array ordered dependencies first, root last"
+    );
   }
   return packages.map((bytes, index) => asBytes(bytes, `IR package-set member ${index + 1}`));
 }
@@ -3674,7 +3937,9 @@ var VirRuntime = class extends ObjectValueRuntime {
     this.requireLiveRuntime();
     this.requireFunction("vir_resolve_call_export");
     if (args.length !== entry.args.length) {
-      throw new Error(`${entry.entry} expects ${entry.args.length} arguments, got ${args.length}`);
+      throw new Error(
+        `${entry.entry} expects ${entry.args.length} arguments, got ${args.length}`
+      );
     }
     const cache = this.callCacheFor(entry);
     const objectResult = this.tryObjectResolvedCall(entry, args, cache, timing);
@@ -3697,12 +3962,24 @@ var VirRuntime = class extends ObjectValueRuntime {
       try {
         for (let index = 0; index < plan.args.length; index++) {
           const arg = plan.args[index];
-          argObjs.push(this.makeObjectValue(arg.type, args[index], `${entry.entry} argument ${arg.name}`));
+          argObjs.push(
+            this.makeObjectValue(
+              arg.type,
+              args[index],
+              `${entry.entry} argument ${arg.name}`
+            )
+          );
         }
       } finally {
         if (timing !== null) timing.endMarshal(marshalStarted);
       }
-      return this.callResolvedObjects(entry, cache, argObjs, (resultObj) => this.liftOwnedObjectValue(plan.resultType, resultObj, `${entry.entry} result`), timing);
+      return this.callResolvedObjects(
+        entry,
+        cache,
+        argObjs,
+        (resultObj) => this.liftOwnedObjectValue(plan.resultType, resultObj, `${entry.entry} result`),
+        timing
+      );
     } finally {
       this.releaseOwnedObjects(argObjs);
     }
@@ -3838,7 +4115,13 @@ var VirRuntime = class extends ObjectValueRuntime {
       const marshalStarted = timing?.beginPhase();
       try {
         fnArgs.forEach((arg, index) => {
-          argObjs.push(this.makeObjectValue(arg.type, args[index], `callback argument ${arg.name}`));
+          argObjs.push(
+            this.makeObjectValue(
+              arg.type,
+              args[index],
+              `callback argument ${arg.name}`
+            )
+          );
         });
       } finally {
         if (timing !== null) timing.endMarshal(marshalStarted);
@@ -3857,7 +4140,10 @@ var VirRuntime = class extends ObjectValueRuntime {
       if (argObjs.length !== 0) {
         const marshalStarted = timing?.beginPhase();
         try {
-          argvPtr = this.allocByteLength(argObjs.length * 4, "callback argv pointer array");
+          argvPtr = this.allocByteLength(
+            argObjs.length * 4,
+            "callback argv pointer array"
+          );
           this.writePointerArray(argvPtr, argObjs);
         } finally {
           if (timing !== null) timing.endMarshal(marshalStarted);
@@ -3869,7 +4155,11 @@ var VirRuntime = class extends ObjectValueRuntime {
         this.hostState?.beginCallTiming(timing);
         const executeStarted = timing.beginPhase();
         try {
-          resultObj = this.exports.vir_closure_call_objects(rootId, argvPtr, argObjs.length);
+          resultObj = this.exports.vir_closure_call_objects(
+            rootId,
+            argvPtr,
+            argObjs.length
+          );
         } finally {
           try {
             timing.endExecute(executeStarted);
@@ -3887,7 +4177,11 @@ var VirRuntime = class extends ObjectValueRuntime {
       if (resultObj === 0) {
         throw new Error(this.lastClosureCallError() || "closure call failed");
       }
-      return this.liftOwnedObjectValue(requireFunctionResult(type, "callback"), resultObj, "callback result");
+      return this.liftOwnedObjectValue(
+        requireFunctionResult(type, "callback"),
+        resultObj,
+        "callback result"
+      );
     } catch (error) {
       if (decodeStarted === void 0) {
         const hostError = this.hostState?.takeCallError();
@@ -4028,8 +4322,9 @@ function createNullableValue(value) {
     });
     return nullable;
   } catch (error) {
-    releaseHostResourcePayload(retained);
-    throw error;
+    const errors = [error instanceof Error ? error : new Error(String(error))];
+    collectCleanupError(errors, () => releaseHostResourcePayload(retained));
+    throwCollectedErrors(errors, "Js.Nullable ownership failed during rollback");
   }
 }
 function nullablePayload(resources, value) {
@@ -4117,16 +4412,8 @@ var HostResourceState = class {
     this.owner = createHostResourceOwner("HostResourceState");
     this.revocableResources = /* @__PURE__ */ new WeakMap();
     this.ownedPayloadResources = /* @__PURE__ */ new Set();
-    this.weakOwnedPayloadResources = /* @__PURE__ */ new Set();
+    this.transferredPayloadTickets = /* @__PURE__ */ new Set();
     this.gcFinalizerErrorMessages = [];
-    this.resourceFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry(({ payload, reference }) => {
-      this.weakOwnedPayloadResources.delete(reference);
-      try {
-        releaseHostResourcePayload(payload);
-      } catch (error) {
-        this.recordGcFinalizerError(error);
-      }
-    }) : null;
     this.temporaryResourceScopes = [];
     this.disposables = /* @__PURE__ */ new Set();
   }
@@ -4143,42 +4430,35 @@ var HostResourceState = class {
     this.requireUsable();
     if (value === null || value === void 0) return null;
     let resource = null;
-    let reference = null;
-    const unregisterToken = {};
-    let released = false;
+    const retainable = isRetainableHostResourcePayload(value);
     try {
       resource = createHostResource(value, null, {
         owner: this.owner,
-        dispose: isRetainableHostResourcePayload(value) ? () => {
-          if (released) return false;
-          released = true;
-          this.resourceFinalizer?.unregister(unregisterToken);
-          this.ownedPayloadResources.delete(resource);
-          if (reference !== null) this.weakOwnedPayloadResources.delete(reference);
-          return releaseHostResourcePayload(value);
-        } : null
+        ...retainable ? payloadResourceLifecycle(this, value) : {}
       });
-      if (isRetainableHostResourcePayload(value)) {
+      if (retainable) {
         this.requireActive();
-        if (tracked) {
-          this.ownedPayloadResources.add(resource);
-        } else {
-          if (this.resourceFinalizer === null || typeof WeakRef !== "function") {
+        this.ownedPayloadResources.add(resource);
+        if (!tracked) {
+          if (!hasHostResourceFinalizationSupport()) {
             throw new Error("untracked host resources require WeakRef and FinalizationRegistry support");
           }
-          reference = new WeakRef(resource);
-          this.weakOwnedPayloadResources.add(reference);
-          this.resourceFinalizer.register(resource, { payload: value, reference }, unregisterToken);
+          transferHostResource(resource);
         }
       }
       const scope = this.temporaryResourceScopes.at(-1);
       scope?.add(resource);
       return resource;
     } catch (error) {
-      if (isRetainableHostResourcePayload(value)) {
-        releaseHostResourcePayload(value);
+      const errors = [error instanceof Error ? error : new Error(String(error))];
+      if (retainable) {
+        if (resource === null) {
+          collectCleanupError(errors, () => releaseHostResourcePayload(value));
+        } else {
+          collectCleanupError(errors, () => releaseHostResource(resource));
+        }
       }
-      throw error;
+      throwCollectedErrors(errors, "host resource adoption failed during ownership rollback");
     }
   }
   recordGcFinalizerError(error) {
@@ -4188,44 +4468,85 @@ var HostResourceState = class {
     this.gcFinalizerErrorMessages.push(`${name}: ${message}`.slice(0, 2048));
   }
   // Creates a unique resource whose receiver is responsible for releasing it.
-  ownedResourceForValue(value) {
+  ownedResourceForValue(value, {
+    label = null,
+    onAbandon = null,
+    retentionPolicy = null,
+    revocationGroup = null
+  } = {}) {
     this.requireUsable();
     if (value === null || value === void 0) return null;
     if (!isRetainableHostResourcePayload(value)) {
-      return createHostResource(value, null, { owner: this.owner });
+      return createHostResource(value, label, {
+        owner: this.owner,
+        onAbandon,
+        retentionPolicy,
+        revocationGroup
+      });
     }
     this.requireActive();
     const retainedValue = retainHostResourcePayload(value);
     let resource = null;
     try {
-      resource = createHostResource(retainedValue, null, {
+      resource = createHostResource(retainedValue, label, {
         owner: this.owner,
-        dispose: () => {
-          this.ownedPayloadResources.delete(resource);
-          return releaseHostResourcePayload(retainedValue);
-        }
+        ...payloadResourceLifecycle(this, retainedValue),
+        onAbandon,
+        retentionPolicy,
+        revocationGroup
       });
       this.ownedPayloadResources.add(resource);
       return resource;
     } catch (error) {
-      releaseHostResourcePayload(retainedValue);
-      throw error;
+      const errors = [error instanceof Error ? error : new Error(String(error))];
+      if (resource === null) {
+        collectCleanupError(errors, () => releaseHostResourcePayload(retainedValue));
+      } else {
+        collectCleanupError(errors, () => releaseHostResource(resource));
+      }
+      throwCollectedErrors(errors, "host resource creation failed during ownership rollback");
     }
   }
-  // Creates a passive resource that can also be invalidated by its JS value.
+  // Creates a move-only resource that can also be invalidated by its JS value.
   // The reverse index contains only WeakRefs and never owns the wrapper/value.
-  revocableResourceForValue(value) {
-    const resource = this.ownedResourceForValue(value);
-    if (resource === null || !isWeakMapKey2(value)) return resource;
-    let references = this.revocableResources.get(value);
-    if (references === void 0) {
-      references = /* @__PURE__ */ new Set();
-      this.revocableResources.set(value, references);
-    } else {
-      sweepRevocableReferences(references);
+  revocableResourceForValue(value, { onAbandon = null } = {}) {
+    this.requireRevocableResourceSupport();
+    let resource = null;
+    let group = null;
+    try {
+      if (isWeakMapKey2(value)) {
+        group = this.revocableResources.get(value);
+        if (group === void 0) {
+          group = Object.freeze({ references: /* @__PURE__ */ new Set() });
+          this.revocableResources.set(value, group);
+        } else {
+          sweepRevocableReferences(group.references);
+        }
+      }
+      resource = this.ownedResourceForValue(value, {
+        onAbandon,
+        retentionPolicy: "move-only",
+        revocationGroup: group
+      });
+      if (resource === null || group === null) return resource;
+      group.references.add(new WeakRef(resource));
+      return resource;
+    } catch (error) {
+      const errors = [error instanceof Error ? error : new Error(String(error))];
+      if (resource === null) {
+        if (typeof onAbandon === "function") {
+          collectCleanupError(errors, () => onAbandon(value));
+        }
+      } else {
+        collectCleanupError(errors, () => abandonHostResource(resource));
+      }
+      throwCollectedErrors(errors, "revocable host resource creation failed during rollback");
     }
-    references.add(new WeakRef(resource));
-    return resource;
+  }
+  requireRevocableResourceSupport() {
+    if (typeof WeakRef !== "function") {
+      throw new Error("revocable host resources require WeakRef support");
+    }
   }
   temporaryResourceForValue(value) {
     const resource = this.ownedResourceForValue(value);
@@ -4263,16 +4584,19 @@ var HostResourceState = class {
   }
   releaseValueResource(value) {
     if (!isWeakMapKey2(value)) return void 0;
-    const references = this.revocableResources.get(value);
-    if (references === void 0) return void 0;
+    const group = this.revocableResources.get(value);
+    if (group === void 0) return void 0;
     this.revocableResources.delete(value);
-    for (const reference of references) {
+    const pending = Array.from(group.references);
+    group.references.clear();
+    const errors = [];
+    for (const reference of pending) {
       const resource = reference.deref();
       if (resource !== void 0 && hostResourceOwner(resource) === this.owner) {
-        releaseHostResource(resource);
+        collectCleanupError(errors, () => releaseHostResource(resource));
       }
     }
-    references.clear();
+    throwCollectedErrors(errors, "host resource alias invalidation failed");
     return void 0;
   }
   addDisposable(value) {
@@ -4293,10 +4617,9 @@ var HostResourceState = class {
   // Debug-only lifecycle visibility for runtime tests; not a stable host API.
   debugResourceCounts() {
     return {
-      passiveStrong: 0,
       scoped: this.temporaryResourceScopes.reduce((count, scope) => count + scope.size, 0),
       temporaryScopes: this.temporaryResourceScopes.length,
-      owners: this.disposables.size + this.ownedPayloadResources.size
+      owners: this.disposables.size + this.ownedPayloadResources.size + this.transferredPayloadTickets.size
     };
   }
   resolveResource(resource, label) {
@@ -4320,13 +4643,10 @@ var HostResourceState = class {
         collectCleanupError(errors, () => releaseHostResource(resource));
       }
       this.ownedPayloadResources.clear();
-      for (const reference of Array.from(this.weakOwnedPayloadResources)) {
-        const resource = reference.deref();
-        if (resource !== void 0) {
-          collectCleanupError(errors, () => releaseHostResource(resource));
-        }
+      for (const ticket of Array.from(this.transferredPayloadTickets)) {
+        collectCleanupError(errors, () => releaseHostResourceTicket(ticket));
       }
-      this.weakOwnedPayloadResources.clear();
+      this.transferredPayloadTickets.clear();
       for (const scope of this.temporaryResourceScopes) {
         for (const resource of Array.from(scope)) {
           collectCleanupError(errors, () => this.releaseResource(resource));
@@ -4355,6 +4675,38 @@ var HostResourceState = class {
     }
   }
 };
+function payloadResourceLifecycle(resources, payload) {
+  const tracking = { ticket: null };
+  return {
+    dispose: () => releaseHostResourcePayload(payload),
+    // Generic identity-result retention must create its clone through the
+    // owning HostResourceState. That gives the new payload lease the same
+    // deterministic owned-wrapper/taken-ticket lifecycle as every other
+    // retainable resource created by this state.
+    retainResource: (value, label) => resources.ownedResourceForValue(value, { label }),
+    onFinalize: () => {
+      if (tracking.ticket !== null) {
+        resources.transferredPayloadTickets.delete(tracking.ticket);
+      }
+    },
+    onRelease: (resource) => {
+      resources.ownedPayloadResources.delete(resource);
+      if (tracking.ticket !== null) {
+        resources.transferredPayloadTickets.delete(tracking.ticket);
+      }
+    },
+    onTake: (resource) => {
+      if (!hasHostResourceFinalizationSupport() || tracking.ticket !== null) return false;
+      const ticket = hostResourceReleaseTicket(resource);
+      if (ticket === null) return false;
+      resources.transferredPayloadTickets.add(ticket);
+      resources.ownedPayloadResources.delete(resource);
+      tracking.ticket = ticket;
+      return true;
+    },
+    reportFinalizerError: (error) => resources.recordGcFinalizerError(error)
+  };
+}
 function disposeHostResourceValue(value) {
   if (typeof value.dispose === "function") {
     return value.dispose();
@@ -4431,21 +4783,35 @@ function createElementResourceHostBindings(resources, operations) {
     },
     "browser.element.addEventListener": (element, eventName, callback) => {
       const target = resources.resolveResource(element, "Element");
+      const name = resources.resolveResource(eventName, "JsString");
+      resources.requireRevocableResourceSupport();
       const listener = operations.createEventListener(
         target,
-        resources.resolveResource(eventName, "JsString"),
+        name,
         callback
       );
       resources.addDisposable(listener);
-      return resources.revocableResourceForValue(listener);
+      return resources.revocableResourceForValue(listener, {
+        onAbandon: () => disposeHostResourceValue(listener)
+      });
     },
     "browser.element.removeEventListener": (listener) => {
       const value = resources.resolveResource(listener, "EventListener");
-      value.remove();
-      resources.releaseValueResource(value);
+      terminateRevocableResource(
+        resources,
+        value,
+        () => value.remove(),
+        "browser event listener removal failed"
+      );
       return void 0;
     }
   };
+}
+function terminateRevocableResource(resources, value, cleanup, label) {
+  const errors = [];
+  collectCleanupError(errors, () => resources.releaseValueResource(value));
+  collectCleanupError(errors, cleanup);
+  throwCollectedErrors(errors, label);
 }
 function withConsumedResources(resources, inputs, run) {
   const consumed = [];
@@ -4481,29 +4847,61 @@ function createHtmlInputElementResourceHostBindings(resources, { fromElement }) 
 }
 function createTimerResourceHostBindings(resources) {
   return {
-    "browser.timer.setTimeout": (delayMs, callback) => resources.revocableResourceForValue(createTimeoutResource(resources, jsNatAsDelay(resources, delayMs), callback)),
+    "browser.timer.setTimeout": (delayMs, callback) => {
+      const delay = jsNatAsDelay(resources, delayMs);
+      resources.requireRevocableResourceSupport();
+      const timeout = createTimeoutResource(resources, delay, callback);
+      return resources.revocableResourceForValue(timeout, {
+        onAbandon: () => disposeHostResourceValue(timeout)
+      });
+    },
     "browser.timer.clearTimeout": (timeout) => {
       const value = resources.resolveResource(timeout, "Timeout");
-      value.clear();
-      resources.releaseValueResource(value);
+      terminateRevocableResource(
+        resources,
+        value,
+        () => value.clear(),
+        "browser timeout cancellation failed"
+      );
       return void 0;
     },
-    "browser.timer.setInterval": (delayMs, callback) => resources.revocableResourceForValue(createIntervalResource(resources, jsNatAsDelay(resources, delayMs), callback)),
+    "browser.timer.setInterval": (delayMs, callback) => {
+      const delay = jsNatAsDelay(resources, delayMs);
+      resources.requireRevocableResourceSupport();
+      const interval = createIntervalResource(resources, delay, callback);
+      return resources.revocableResourceForValue(interval, {
+        onAbandon: () => disposeHostResourceValue(interval)
+      });
+    },
     "browser.timer.clearInterval": (interval) => {
       const value = resources.resolveResource(interval, "Interval");
-      value.clear();
-      resources.releaseValueResource(value);
+      terminateRevocableResource(
+        resources,
+        value,
+        () => value.clear(),
+        "browser interval cancellation failed"
+      );
       return void 0;
     }
   };
 }
 function createAnimationResourceHostBindings(resources, { requestFrame, cancelFrame }) {
   return {
-    "browser.animation.requestAnimationFrame": (callback) => resources.revocableResourceForValue(createAnimationFrameResource(resources, callback, requestFrame, cancelFrame)),
+    "browser.animation.requestAnimationFrame": (callback) => {
+      resources.requireRevocableResourceSupport();
+      const frame = createAnimationFrameResource(resources, callback, requestFrame, cancelFrame);
+      return resources.revocableResourceForValue(frame, {
+        onAbandon: () => disposeHostResourceValue(frame)
+      });
+    },
     "browser.animation.cancelAnimationFrame": (frame) => {
       const value = resources.resolveResource(frame, "AnimationFrame");
-      value.cancel();
-      resources.releaseValueResource(value);
+      terminateRevocableResource(
+        resources,
+        value,
+        () => value.cancel(),
+        "browser animation-frame cancellation failed"
+      );
       return void 0;
     }
   };
@@ -4530,14 +4928,15 @@ function createIntervalResource(resources, delayMs, callback) {
   let cleared = false;
   const release = () => {
     const errors = [];
-    collectCleanupError(errors, () => ownedCallback.release());
     resources.removeDisposable(value);
+    collectCleanupError(errors, () => ownedCallback.release());
     throwCollectedErrors(errors, "browser interval callback release failed");
   };
   const value = {
     clear() {
       if (cleared) return void 0;
       cleared = true;
+      resources.removeDisposable(value);
       const errors = [];
       if (token !== null) {
         const activeToken = token;
@@ -4598,13 +4997,13 @@ function createScheduledCallbackResource(resources, callback, { disposeMethod, s
   const value = {
     [disposeMethod]: once(() => {
       const errors = [];
+      resources.removeDisposable(value);
       if (token !== null) {
         const activeToken = token;
         token = null;
         collectCleanupError(errors, () => cancel(activeToken));
       }
       collectCleanupError(errors, () => ownedCallback.release());
-      resources.removeDisposable(value);
       throwCollectedErrors(errors, `scheduled ${disposeMethod} cleanup failed`);
     })
   };
@@ -4616,8 +5015,10 @@ function createScheduledCallbackResource(resources, callback, { disposeMethod, s
       reportEventHandlerError(error);
     } finally {
       completed = true;
-      value[disposeMethod]();
-      resources.releaseValueResource(value);
+      const errors = [];
+      collectCleanupError(errors, () => resources.releaseValueResource(value));
+      collectCleanupError(errors, () => value[disposeMethod]());
+      throwCollectedErrors(errors, `scheduled ${disposeMethod} completion cleanup failed`);
     }
   };
   try {
@@ -4680,34 +5081,95 @@ function performanceNow() {
 }
 
 // vir/web/src/react/vir-react-hooks.js
+var NO_STORED_VALUE = /* @__PURE__ */ Symbol("lean-vir.no-stored-react-value");
 var browserEffectStates = /* @__PURE__ */ new WeakMap();
 var browserEffectFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((state) => releaseBrowserEffectState(state, true)) : null;
-var browserRenderPayloadOwners = /* @__PURE__ */ new WeakMap();
-var browserRenderFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((state) => releaseBrowserRenderState(state, true)) : null;
+var browserRenderPayloadLeases = /* @__PURE__ */ new WeakMap();
+var browserRenderFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((ticket) => releaseBrowserRenderTeardownTicket(ticket, true)) : null;
+var browserQueuedStateFinalizer = typeof FinalizationRegistry === "function" ? new FinalizationRegistry((record) => releaseBrowserQueuedStateRecord(record, true)) : null;
+function releaseBrowserPayloadLease(lease) {
+  if (lease?.active !== true || lease.owner === null || lease.owner === void 0) return false;
+  const ownedValue = lease.ownedValue;
+  detachBrowserPayloadLease(lease);
+  lease.owner = null;
+  lease.ownedValue = NO_STORED_VALUE;
+  lease.active = false;
+  return releaseReactStatePayload(ownedValue);
+}
+function detachBrowserPayloadLease(lease) {
+  const owner = lease.owner;
+  owner?.payloadLeases?.delete(lease);
+  if (owner?.kind !== "render") return;
+  const leases = browserRenderPayloadLeases.get(lease.value);
+  if (leases === void 0) return;
+  leases.delete(lease);
+  if (leases.size === 0) browserRenderPayloadLeases.delete(lease.value);
+}
+function releaseBrowserQueuedStateRecord(record, fromFinalizer = false) {
+  if (record?.active !== true) return false;
+  record.active = false;
+  if (!fromFinalizer) browserQueuedStateFinalizer?.unregister(record);
+  const value = record.value;
+  const payloadLeases = Array.from(record.payloadLeases);
+  const owner = record.ownerRef?.deref();
+  const report = record.report;
+  record.value = NO_STORED_VALUE;
+  record.payloadLeases.clear();
+  record.ownerRef = null;
+  record.report = null;
+  owner?.pendingActions?.delete(record);
+  const errors = [];
+  for (const lease of payloadLeases) {
+    collectCleanupError(errors, () => releaseBrowserPayloadLease(lease));
+  }
+  collectCleanupError(errors, () => releaseReactStatePayload(value));
+  if (errors.length !== 0) {
+    if (!fromFinalizer) {
+      throwCollectedErrors(errors, "browser React queued state release failed");
+    }
+    reportReactFinalizerErrors(report, errors);
+  }
+  return true;
+}
+function detachBrowserRenderTeardownTicket(ticket) {
+  if (ticket?.active !== true) return null;
+  ticket.active = false;
+  const state = ticket.state;
+  const resources = ticket.resources;
+  ticket.state = null;
+  ticket.resources = null;
+  resources?.removeDisposable(ticket);
+  return state;
+}
+function releaseBrowserRenderTeardownTicket(ticket, fromFinalizer = false) {
+  const state = detachBrowserRenderTeardownTicket(ticket);
+  if (state === null) return false;
+  return releaseBrowserRenderState(state, fromFinalizer);
+}
 function releaseBrowserRenderState(state, fromFinalizer = false) {
   if (state?.closed === true) return false;
   state.closed = true;
   const reducers = Array.from(state.reducers.values());
   const effects = Array.from(state.effects.values(), (record) => record.effect);
-  const payloads = Array.from(state.ownedPayloads);
+  const payloadLeases = Array.from(state.payloadLeases);
   state.reducers.clear();
   state.effects.clear();
   state.candidates.clear();
   state.refs.clear();
   state.setters.clear();
-  state.ownedPayloads.clear();
+  state.payloadLeases.clear();
   const errors = [];
   for (const reducer of reducers) collectCleanupError(errors, () => releaseLeanCallback(reducer));
   for (const effect of effects) collectCleanupError(errors, () => releaseBrowserEffect(effect));
-  for (const payload of payloads) {
-    if (browserRenderPayloadOwners.get(payload) === state) {
-      browserRenderPayloadOwners.delete(payload);
-      collectCleanupError(errors, () => releaseReactStatePayload(payload));
-    }
+  for (const lease of payloadLeases) {
+    collectCleanupError(errors, () => releaseBrowserPayloadLease(lease));
   }
   if (errors.length !== 0) {
     if (!fromFinalizer) throwCollectedErrors(errors, "browser React render ownership cleanup failed");
-    for (const error of errors) state.resources.recordGcFinalizerError?.(error);
+    reportReactFinalizerErrors(
+      (error) => state.resources.recordGcFinalizerError?.(error),
+      errors
+    );
   }
   return true;
 }
@@ -4720,18 +5182,29 @@ function releaseBrowserEffect(effect) {
 function releaseBrowserEffectState(state, fromFinalizer = false) {
   if (state?.released === true) return false;
   state.released = true;
-  const errors = [];
-  collectCleanupError(errors, () => releaseLeanCallback(state.setup));
-  collectCleanupError(errors, () => releaseLeanCallback(state.cleanup));
+  const setup = state.setup;
+  const cleanup = state.cleanup;
   state.setup = null;
   state.cleanup = null;
+  const errors = [];
+  collectCleanupError(errors, () => releaseLeanCallback(setup));
+  collectCleanupError(errors, () => releaseLeanCallback(cleanup));
   if (errors.length !== 0) {
     if (!fromFinalizer) {
       throwCollectedErrors(errors, "React effect base callback releases failed");
     }
-    for (const error of errors) state.report?.(error);
+    reportReactFinalizerErrors(state.report, errors);
   }
   return true;
+}
+function reportReactFinalizerErrors(report, errors) {
+  if (typeof report !== "function") return;
+  for (const error of errors.slice(0, 16)) {
+    try {
+      report(error);
+    } catch {
+    }
+  }
 }
 function releaseLeanCallback(callback) {
   if (typeof callback?.release === "function") {
@@ -5281,9 +5754,9 @@ function createBrowserEventListenerResource(resources, target, eventName, callba
   const listener = {
     remove: once(() => {
       const errors = [];
+      resources.removeDisposable(listener);
       collectCleanupError(errors, () => target.removeEventListener(eventName, handler));
       collectCleanupError(errors, () => ownedCallback.release());
-      resources.removeDisposable(listener);
       throwCollectedErrors(errors, "browser event listener removal failed");
     })
   };
@@ -5386,6 +5859,9 @@ var VirHostState = class {
   getRootedResource(rootId, take = 0) {
     return this.resourceRoots.get(rootId, { take: take !== 0 });
   }
+  rootedResourceIsOwned(rootId) {
+    return this.resourceRoots.isOwned(rootId) ? 1 : 0;
+  }
   releaseRootedResource(rootId) {
     return this.resourceRoots.release(rootId);
   }
@@ -5472,15 +5948,20 @@ var VirHostState = class {
       }
       const resultLabel = `${entry.target} result`;
       const retainedIdentityResult = isHostResource(value) && args.includes(value) ? retainHostResource(value, resultLabel) : null;
+      const ownedResultResource = retainedIdentityResult ?? (isHostResource(value) ? value : null);
       try {
         const resultValue = retainedIdentityResult ?? value;
-        return explicitConversionTarget ? this.runtime.makeExplicitConversionObjectValue(entry.result, resultValue, resultLabel) : this.runtime.makeHostResourceObjectValue(entry.result, resultValue, resultLabel);
+        const resultObject = explicitConversionTarget ? this.runtime.makeExplicitConversionObjectValue(entry.result, resultValue, resultLabel) : this.runtime.makeHostResourceObjectValue(entry.result, resultValue, resultLabel);
+        if (ownedResultResource !== null) {
+          commitHostResource(ownedResultResource);
+        }
+        return resultObject;
       } catch (error) {
-        if (retainedIdentityResult === null) throw error;
+        if (ownedResultResource === null) throw error;
         throwWithCleanup(
           error,
-          () => releaseHostResource(retainedIdentityResult),
-          `Vir host import ${entry.target} failed during identity-result cleanup`
+          () => abandonHostResource(ownedResultResource),
+          `Vir host import ${entry.target} failed during result ownership cleanup`
         );
       }
     } catch (error) {
@@ -5704,6 +6185,7 @@ function createVirImports(module, overrides = {}, hostState = null) {
     };
     imports.env.vir_resource_root = (value, owned) => hostState.rootResource(value, owned);
     imports.env.vir_resource_get = (rootId, take) => hostState.getRootedResource(rootId, take);
+    imports.env.vir_resource_is_owned = (rootId) => hostState.rootedResourceIsOwned(rootId);
     imports.env.vir_resource_release = (rootId) => hostState.releaseRootedResourceFromFinalizer(rootId);
   }
   return imports;

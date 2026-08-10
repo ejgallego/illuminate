@@ -1,5 +1,104 @@
 # FIR-native prepared hit-scene handoff
 
+## Current FIR status
+
+The compiler-admission slice and its W6 lazy-cache result-kind proof
+are linked and accepted on FIR `main`. The acceptance commit is
+`4d91fb0d`; the current FIR `main` observed by Illuminate is
+`31b9290c`. Illuminate independently verified the accepted probe
+artifacts:
+
+```text
+159 reachable declarations
+34 externals
+0 unsupported declarations
+311 runtime operations
+126 base functions
+no lowering error
+```
+
+The published probe digests match exactly:
+
+```text
+fa08b94db107dce57202532500df60c1b9180e9679c0aeb814f0e4861b0f475f  hit-scene-probe.json
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  hit-scene-unsupported.lcnf
+476fec8fe1c2ed9bf89f9848e90ddb0bd2f0b385c32e8b1072246776f838209c  hit-scene-partial-application.lcnf
+```
+
+This is a compiler/lowering acceptance, not a runtime-package handoff.
+FIR currently publishes no `illuminate-hit-scene.wasm`, browser
+adapter, stable input-layout contract, or external-engine differential
+result. Illuminate's staging gate must continue to reject the
+compiler-demo directory. W7 can now use the admitted closure for the
+resident-math and immutable-package slice after its current
+object-carrier/provenance work.
+
+## Accepted closure and shared fixture
+
+The real closure reaches all eight of these operations:
+
+```text
+Float.abs
+Float.sqrt
+Float.sin
+Float.cos
+Float.acos
+Float.atan2
+Float.cbrt
+Float.floor
+```
+
+The newly observed path is:
+
+```text
+Illuminate.HitScene.query
+→ Illuminate.HitScene.hitTest
+→ Illuminate.HitTree.hitTest
+→ Illuminate.HitPrimitive.hitTest
+→ pointOnStroke
+→ Illuminate.StrokeTrace.ofPathData
+→ pathDataHits
+→ rayCubicBezier
+→ cubicRootsInUnitInterval
+→ Float.cbrt
+```
+
+The second observed path is:
+
+```text
+Illuminate.HitScene.query
+→ Illuminate.HitScene.hitTest
+→ Illuminate.HitTree.hitTest
+→ Illuminate.HitPrimitive.hitTest
+→ pointOnStroke
+→ Illuminate.StrokeTrace.ofPathData
+→ pathDataHits
+→ rayArc
+→ List.forIn'.loop
+→ Float.floor
+```
+
+FIR's accepted inventory includes these externals. Do not replace them
+with adapter code or JavaScript imports. If resident linking exposes
+another missing operation, report its exact closure path before adding
+a workaround.
+
+Illuminate now publishes a runtime-neutral fixture at
+`test_output/hit-scene-benchmark.json` with schema
+`illuminate.hit-scene-benchmark/v1`. It contains a 4,088-byte encoded
+scene and 301 bit-exact oracle queries: 296 mixed-geometry reference
+queries plus signed zero on each axis, the binary64 predecessor and
+successor of a boundary, and a fractional negative-coordinate case.
+Its declared coverage includes every `HitTree`, `HitPrimitive`, and
+`PathCmd` constructor, both labeled and unlabeled tags, bounds
+prepared from text/styled text/images, fills, strokes, lines, cubics,
+and arcs.
+
+Use the same fixture for FIR correctness. Measure the production query
+through an untimed adapter path; collect input/execute/decode/rewind
+phases in a separate diagnostic pass so observer and timing-object
+allocation do not inflate the headline FIR/JavaScript/VIR comparison.
+
 ## Goal
 
 Compile Illuminate's real prepared hit-test query for use by the
@@ -12,7 +111,8 @@ Do not copy the hit-test algorithm into the adapter, flatten paths in
 JavaScript, transfer SVG or rendering styles, or add adapter-side
 semantic translations.
 
-The Illuminate work is on the `feat/vir-performance` branch. The FIR
+The active Illuminate work is on `feat/vir-hit-scene`, continuing the
+published `ejgallego/feat/vir-performance` source line. The FIR
 package must pin a clean immutable Illuminate revision from the
 `ejgallego` remote; do not open a pull request.
 
@@ -46,10 +146,12 @@ ed63356e5f21cd40b5b653510f20fb71e54b89b4072d848a5a58a66bd4b4d1d0  src/Illuminate
 Recompute and pin all source hashes from the accepted clean revision
 rather than trusting this prose after the branch advances.
 
-Illuminate currently uses Lean `v4.33.0-rc2`, while the completed FIR
-wasm-generation lane is pinned to Lean `v4.32.0`. Report this
-compatibility issue before changing either repository's toolchain or
-rewriting the entry.
+FIR successfully captured the clean Illuminate source at
+`af088e313eaade90be100aeaf63ddac79a8c1710` with Lean `v4.32.0`, while
+the active Illuminate/VIR worktree uses Lean `v4.33.0-rc2`. The source
+compatibility gate is therefore resolved for that immutable revision.
+Do not change either repository's toolchain or rewrite the entry when
+producing the package.
 
 ## Data boundary
 
@@ -96,12 +198,13 @@ established objects:
     kind: "something";
 }
 {
-    kind: ("tag", value, label);
+    kind: "tag";
+    value: number;
+    label: string;
 }
 ```
 
-Nullary results must not manufacture Lean kind strings or empty
-labels.
+Nullary results must not manufacture value or label payloads.
 
 ## Adapter contract
 
@@ -114,7 +217,8 @@ const result = adapter.hitTest(created.scene, x, y);
 adapter.disposeHitScene(created.scene);
 ```
 
-Recommended capability name:
+Provisional capability name, to be confirmed by the executable package
+handoff:
 
 ```text
 fir.illuminate-hit-scene.browser/v1
@@ -163,21 +267,49 @@ application-visible Wasm address.
    `SHA256SUMS`, a smoke test, and the browser adapter. Do not land it
    or open a PR.
 
+## Illuminate-side performance measurement
+
+After staging an accepted immutable package, run the shared VIR/FIR
+measurement rather than timing the FIR adapter in isolation:
+
+```sh
+ILLUMINATE_FIR_HIT_SCENE_DIR=/absolute/path/to/immutable/package \
+  npm run stage:fir-hit-scene
+npm run measure:hit-scene -- --require-fir
+npm run stage:hit-scene-performance
+```
+
+The machine-readable report is
+`test_output/hit-scene-performance.json`; serve
+`test_output/hit-scene-performance.html` to inspect the production
+latency ratio and side-by-side diagnostic phase bars. The runner uses
+the same retained 4,088-byte scene, binary64 coordinates, expected
+results, warm-up, measured query order, and process for both backends.
+It retains all raw production and diagnostic samples and reports the
+paired FIR/VIR ratio for each matching query and round. This paired
+ratio, rather than absolute measurements taken at different times, is
+the primary comparison.
+
+Production wall-clock sampling and detailed phase profiling are
+separate passes. VIR uses `runtime.call` in the production pass and
+`runtime.callTimed` only in the diagnostic pass. The proposed v1 FIR
+adapter returns phase timings from its normal `hitTest` method; if the
+published package retains that behavior, the report records the
+instrumentation asymmetry rather than presenting its result as a
+perfectly timing-free comparison.
+
 Illuminate's current differential test prepares a mixed scene,
 round-trips its transport, and checks the prepared result against
-`Diagram.hitTest` over 295 points.
+`Diagram.hitTest` over the 301 fixture queries described above.
 
-## VIR finding
+## VIR comparison status
 
-A direct `@[vir_export]` probe of the same query was rejected because
-its closure reaches unsupported `Float.abs` through path/stroke
-tracing. The same native-extern gap is present in the local
-`origin/main` VIR reference
-`ff3216873f918f057a766558a784ceac492b57a9`; it is not caused by the
-older Illuminate-private VIR checkout. The closure also uses square
-root and trigonometric operations for curves and arcs.
-
-Do not work around this with per-operation JavaScript `Math.*` host
-imports: those crossings would dominate the workload we are trying to
-measure. FIR is the immediate integration route; VIR can follow when
-its native Float-math surface supports this closure.
+The VIR experiment now validates the intended retained boundary: the
+complete typed scene crosses once, while each query sends only an
+opaque handle and two bit-exact binary64 coordinates. All eight Float
+operations are implemented on VIR `feat/float-geometry-math` at
+`e39b1cdd`, and the complete 301-query oracle passes. The combined VIR
+PR #103 validation head `f85dfa5` additionally keeps Wasm memory fixed
+at 4 MiB through the strict 10,000-query workload. This provides the
+executable comparison lane while FIR builds the native package; both
+runtimes execute the same Lean algorithm.

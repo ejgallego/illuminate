@@ -1,5 +1,98 @@
 # VIR API request: native `Float` math for geometric queries
 
+## Accepted implementation
+
+All eight operations required by the measured Illuminate closure are
+now implemented on VIR branch `feat/float-geometry-math` at
+`e39b1cdd8f3be5105ff515c3b488a8aa81b6d345`:
+
+```text
+Float.abs
+Float.sqrt
+Float.sin
+Float.cos
+Float.acos
+Float.atan2
+Float.cbrt
+Float.floor
+```
+
+Illuminate's repository-local VIR checkout is clean and detached at
+that commit. The real retained hit-scene package now generates
+successfully with 21 package-set members, format 10, 296 declarations
+(243 Lean IR and 53 native externs), and exactly the intended `mount`,
+`query`, and `dispose` interface exports. The 301-query semantic
+oracle passes, including cubics, arcs, signed zero, and the two
+boundary-adjacent binary64 values. There are no remaining closure
+dependencies to request.
+
+Long-running validation did expose a separate VIR memory-retention
+problem in path tracing. That is documented independently in
+`VIR_HIT_SCENE_MEMORY_REPORT.md`; it does not change the accepted math
+surface.
+
+## Follow-up from the real closure
+
+The original six operations below landed on the local VIR
+`feat/float-geometry-math` branch at
+`4bf199b8c655a4db91cc82a756af7134841d536e`. Package generation now
+advances through those operations and stops at one additional
+dependency:
+
+```lean
+Float.cbrt : Float → Float
+```
+
+The exact closure path is:
+
+```text
+Illuminate.HitScene.Vir.query
+→ Illuminate.HitScene.query
+→ Illuminate.HitScene.hitTest
+→ Illuminate.HitTree.hitTest
+→ Illuminate.HitPrimitive.hitTest
+→ pointOnStroke
+→ Illuminate.StrokeTrace.ofPathData
+→ pathDataHits
+→ rayCubicBezier
+→ cubicRootsInUnitInterval
+→ Float.cbrt
+```
+
+Please register this existing Lean declaration as one
+`.float → .float` native extern using the `cbrt` native symbol. This
+is exercised by the real cubic-stroke fixture; it is not a speculative
+expansion of the requested math surface. After it lands, Illuminate
+will rerun package generation and report the next exact closure
+dependency, if any.
+
+The pending `cbrt` implementation has now been applied to Illuminate's
+private VIR checkout. Package generation advances through cubic roots
+and exposes the next exact dependency:
+
+```lean
+Float.floor : Float → Float
+```
+
+```text
+Illuminate.HitScene.Vir.query
+→ Illuminate.HitScene.query
+→ Illuminate.HitScene.hitTest
+→ Illuminate.HitTree.hitTest
+→ Illuminate.HitPrimitive.hitTest
+→ pointOnStroke
+→ Illuminate.StrokeTrace.ofPathData
+→ pathDataHits
+→ rayArc
+→ List.forIn'.loop
+→ Float.floor
+```
+
+Please register `Float.floor` as one `.float → .float` native extern
+using the `floor` native symbol. Arc tracing uses it to normalize
+angles. As with the other operations, keep it inside the restricted
+native registry rather than a JavaScript host import.
+
 ## Request
 
 Please add VIR native-extern support for these existing Lean
@@ -118,7 +211,7 @@ runtime, matching VIR's existing treatment of arithmetic and
 5. Confirm VIR package generation accepts the real
    `Illuminate.HitScene.query` closure without substituting or copying
    the geometry algorithm.
-6. Run an Illuminate differential over its 295 prepared hit-test
+6. Run an Illuminate differential over its 301 prepared hit-test
    points, including transformed, clipped, tagged, layered, text,
    image, line, cubic, and arc cases.
 

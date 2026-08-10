@@ -148,7 +148,12 @@ async function settle(value) {
 export async function runPairedHitSceneBenchmark(
     fixture,
     backends,
-    { warmupRounds = 2, measuredRounds = 10, now = () => performance.now() } = {},
+    {
+        warmupRounds = 2,
+        measuredRounds = 10,
+        retainSamples = false,
+        now = () => performance.now(),
+    } = {},
 ) {
     const entries = Object.entries(backends);
     if (entries.length === 0) throw new Error("hit-scene benchmark requires at least one backend");
@@ -211,7 +216,11 @@ export async function runPairedHitSceneBenchmark(
             Object.fromEntries(
                 mounted.map(({ name, creationMs, samples }) => [
                     name,
-                    Object.freeze({ creationMs, query: summarize(samples) }),
+                    Object.freeze({
+                        creationMs,
+                        query: summarize(samples),
+                        ...(retainSamples ? { samples: Object.freeze([...samples]) } : {}),
+                    }),
                 ]),
             ),
         );
