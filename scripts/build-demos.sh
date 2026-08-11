@@ -7,8 +7,7 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$repo_root"
 
 lake test --wfail
-npm run stage:vir
-npm run stage:vir-hit-scene
+npm run stage:vir-all
 
 if [ -n "${ILLUMINATE_NATIVE_PLAYER_DIR:-}" ]; then
   npm run stage:native

@@ -20,6 +20,7 @@
         "stage:native": "bash scripts/stage-native-player.sh",
         "stage:players": "npm run stage:vir && npm run stage:native",
         "stage:vir": "bash scripts/stage-vir-player.sh",
+        "stage:vir-all": "bash scripts/stage-vir-artifacts.sh",
         "stage:vir-hit-scene": "bash scripts/stage-vir-hit-scene.sh",
         "test:fir-live-host": "node --no-warnings scripts/test-fir-live-player.mjs",
         "test:fir-hit-scene-host": "node --no-warnings scripts/test-fir-hit-scene-host.mjs",
