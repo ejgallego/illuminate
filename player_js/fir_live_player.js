@@ -157,7 +157,7 @@ export function createSelectionDomRenderer(animation, container) {
         render(selection) {
             const segment = animation.segments[selection.segment];
             if (segment === undefined) {
-                throw new Error(`FIR selection chose missing segment ${selection.segment}`);
+                throw new Error(`selection chose missing segment ${selection.segment}`);
             }
             if (installedSegment !== selection.segment || selection.segmentChanged) {
                 container.innerHTML = segment.sync;
@@ -172,7 +172,7 @@ export function createSelectionDomRenderer(animation, container) {
             const values = segment.params[selection.localFrame];
             if (values === undefined || values.length !== segment.pmap.length) {
                 throw new Error(
-                    `FIR selection chose invalid local frame ${selection.localFrame} in segment ${selection.segment}`,
+                    `selection chose invalid local frame ${selection.localFrame} in segment ${selection.segment}`,
                 );
             }
             for (let index = 0; index < segment.pmap.length; index += 1) {
@@ -180,7 +180,7 @@ export function createSelectionDomRenderer(animation, container) {
                 const element = elements[binding.e];
                 if (element === undefined) {
                     throw new Error(
-                        `FIR selection targeted missing data-e=${binding.e} in segment ${selection.segment}`,
+                        `selection targeted missing data-e=${binding.e} in segment ${selection.segment}`,
                     );
                 }
                 const value = values[index];

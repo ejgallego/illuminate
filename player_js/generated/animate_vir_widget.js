@@ -4,6 +4,52 @@
 import * as React from "react";
 import { useRpcSession } from "@leanprover/infoview";
 
+// player_js/fir_live_player.js
+function createSelectionDomRenderer(animation, container) {
+  let installedSegment = null;
+  let elements = [];
+  return {
+    render(selection) {
+      const segment = animation.segments[selection.segment];
+      if (segment === void 0) {
+        throw new Error(`selection chose missing segment ${selection.segment}`);
+      }
+      if (installedSegment !== selection.segment || selection.segmentChanged) {
+        container.innerHTML = segment.sync;
+        elements = [];
+        for (const element of container.querySelectorAll("[data-e]")) {
+          const value = element.getAttribute("data-e");
+          const index = value === null ? Number.NaN : Number.parseInt(value, 10);
+          if (Number.isSafeInteger(index) && index >= 0) elements[index] = element;
+        }
+        installedSegment = selection.segment;
+      }
+      const values = segment.params[selection.localFrame];
+      if (values === void 0 || values.length !== segment.pmap.length) {
+        throw new Error(
+          `selection chose invalid local frame ${selection.localFrame} in segment ${selection.segment}`
+        );
+      }
+      for (let index = 0; index < segment.pmap.length; index += 1) {
+        const binding = segment.pmap[index];
+        const element = elements[binding.e];
+        if (element === void 0) {
+          throw new Error(
+            `selection targeted missing data-e=${binding.e} in segment ${selection.segment}`
+          );
+        }
+        const value = values[index];
+        if (binding.a === "textContent") element.textContent = value;
+        else element.setAttribute(binding.a, value);
+      }
+    },
+    dispose() {
+      installedSegment = null;
+      elements = [];
+    }
+  };
+}
+
 // vir/web/src/runtime/interface-effects.js
 var EFFECT_LABELS = /* @__PURE__ */ new Set(["pure", "runtime", "io", "dom", "react"]);
 function isInterfaceEffectLabel(effect) {
@@ -6392,10 +6438,8 @@ function selectWasmUrl({ wasmUrl, wasmDebugUrl, debugWasm }) {
   return wasmUrl ?? VIR_WASM_RELEASE_FILE;
 }
 
-// player_js/animate_vir_widget.js
-var e = React.createElement;
+// player_js/vir_infoview_runtime.js
 var serviceCache = /* @__PURE__ */ new Map();
-var nextMountId = 0;
 function decodeVirAsset(data) {
   var binary = atob(data);
   var bytes = new Uint8Array(binary.length);
@@ -6417,10 +6461,9 @@ async function readAsset(rpc, path) {
   );
 }
 function packageSetMemberPaths(packageSetPath, dataBase64) {
-  var text = new TextDecoder().decode(decodeVirAsset(dataBase64));
   var descriptor = (
     /** @type {VirPackageSetDescriptor} */
-    JSON.parse(text)
+    JSON.parse(new TextDecoder().decode(decodeVirAsset(dataBase64)))
   );
   if (descriptor.format !== IR_PACKAGE_SET_FORMAT || descriptor.version !== IR_PACKAGE_SET_VERSION || !Array.isArray(descriptor.packages) || descriptor.packages.length === 0) {
     throw new Error("invalid VIR package-set descriptor");
@@ -6436,56 +6479,47 @@ function packageSetMemberPaths(packageSetPath, dataBase64) {
     }
     return basePath + path;
   });
-  if (new Set(paths).size !== paths.length) {
-    throw new Error("duplicate VIR package-set member path");
-  }
+  if (new Set(paths).size !== paths.length) throw new Error("duplicate VIR package member");
   return paths;
 }
 async function readPackageSetAssets(rpc, packageSetPath) {
   var descriptor = await readAsset(rpc, packageSetPath);
-  if (!descriptor.dataBase64) {
-    throw new Error("VIR package-set RPC returned no descriptor data");
-  }
-  var memberPaths = packageSetMemberPaths(packageSetPath, descriptor.dataBase64);
+  if (!descriptor.dataBase64) throw new Error("VIR package-set RPC returned no data");
+  var paths = packageSetMemberPaths(packageSetPath, descriptor.dataBase64);
   var members = await Promise.all(
-    memberPaths.map(function(path) {
+    paths.map(function(path) {
       return readAsset(rpc, path);
     })
   );
   if (members.some(function(member) {
     return !member.dataBase64;
   })) {
-    throw new Error("VIR package-set RPC returned no member data");
+    throw new Error("VIR package member RPC returned no data");
   }
   return (
     /** @type {VirPackageSetAssets} */
-    { descriptor, memberPaths, members }
+    { descriptor, members }
   );
 }
 async function statPackageSetAssets(rpc, packageSetPath) {
   var descriptor = await readAsset(rpc, packageSetPath);
-  if (!descriptor.dataBase64) {
-    throw new Error("VIR package-set RPC returned no descriptor data");
-  }
-  var memberPaths = packageSetMemberPaths(packageSetPath, descriptor.dataBase64);
-  var members = await Promise.all(
-    memberPaths.map(function(path) {
-      return statAsset(rpc, path);
-    })
-  );
-  return [descriptor, ...members];
+  if (!descriptor.dataBase64) throw new Error("VIR package-set RPC returned no data");
+  var paths = packageSetMemberPaths(packageSetPath, descriptor.dataBase64);
+  return [
+    descriptor,
+    ...await Promise.all(
+      paths.map(function(path) {
+        return statAsset(rpc, path);
+      })
+    )
+  ];
 }
 function disposeService(service) {
-  if (service.idleTimer !== null) {
-    clearTimeout(service.idleTimer);
-    service.idleTimer = null;
-  }
-  if (serviceCache.get(service.key) === service) {
-    serviceCache.delete(service.key);
-  }
+  if (service.idleTimer !== null) clearTimeout(service.idleTimer);
+  if (serviceCache.get(service.key) === service) serviceCache.delete(service.key);
   service.runtime.dispose();
 }
-function releaseService(service) {
+function releaseVirRuntimeService(service) {
   service.refs = Math.max(0, service.refs - 1);
   if (service.refs !== 0) return;
   if (service.stale) {
@@ -6496,16 +6530,25 @@ function releaseService(service) {
     }, 6e4);
   }
 }
-async function acquireService(rpc, wasmPath, packageSetPath) {
+async function statVirRuntimeRevision(rpc, wasmPath, packageSetPath) {
+  var assets = await Promise.all([
+    statAsset(rpc, wasmPath),
+    statPackageSetAssets(rpc, packageSetPath)
+  ]);
+  return JSON.stringify(
+    [assets[0], ...assets[1]].map(function(asset) {
+      return asset.revision;
+    })
+  );
+}
+async function acquireVirRuntimeService(rpc, wasmPath, packageSetPath) {
   var assets = await Promise.all([
     readAsset(rpc, wasmPath),
     readPackageSetAssets(rpc, packageSetPath)
   ]);
   var wasm = assets[0];
   var packageSet = assets[1];
-  if (!wasm.dataBase64) {
-    throw new Error("VIR Wasm RPC returned no data");
-  }
+  if (!wasm.dataBase64) throw new Error("VIR Wasm RPC returned no data");
   var baseKey = JSON.stringify([wasmPath, packageSetPath]);
   var key = JSON.stringify([
     baseKey,
@@ -6545,21 +6588,224 @@ async function acquireService(rpc, wasmPath, packageSetPath) {
   service.refs += 1;
   return service;
 }
+
+// player_js/vir_selection_player.js
+var VIR_SELECTION_MOUNT = "Illuminate.Animation.Vir.mountSelectionPlayer";
+var VIR_SELECTION_SNAPSHOT = "Illuminate.Animation.Vir.selectionPlayerSnapshot";
+var VIR_SELECTION_DISPATCH = "Illuminate.Animation.Vir.dispatchSelectionPlayer";
+var VIR_SELECTION_DISPOSE = "Illuminate.Animation.Vir.disposeSelectionPlayer";
+function virSelectionNow() {
+  return globalThis.performance?.now?.() ?? Date.now();
+}
+function projectVirSelectionAnimation(animation) {
+  return {
+    timeline: {
+      fps: animation.fps,
+      totalFrames: animation.totalFrames,
+      segments: animation.segments.map((segment) => ({
+        startFrame: segment.sf,
+        frameCount: segment.fc,
+        paramMap: [],
+        params: []
+      })),
+      steps: animation.steps.map((step) => ({
+        frame: step.frame,
+        pause: step.pause,
+        loop: step.loop
+      }))
+    }
+  };
+}
+function projectVirSelectionEvent(event) {
+  switch (event.kind) {
+    case "advance":
+    case "pause":
+      return { kind: event.kind };
+    case "seek":
+    case "loopAt":
+      return { kind: event.kind, value: event.frame };
+    case "playTo":
+      return {
+        kind: "playTo",
+        fields: { frame: event.frame, loopAfter: event.loopAfter }
+      };
+    case "tick":
+      return { kind: "tick", value: event.timestamp };
+  }
+}
+function requireVirSelectionMount(result, operation) {
+  if (typeof result !== "object" || result === null || !("kind" in result)) {
+    throw new Error(`VIR selection ${operation} returned an invalid result`);
+  }
+  if (result.kind === "error") {
+    const message = "value" in result ? result.value : "unknown error";
+    throw new Error(`VIR selection ${operation} failed: ${String(message)}`);
+  }
+  if (result.kind !== "ok" || !("value" in result)) {
+    throw new Error(`VIR selection ${operation} returned an invalid Except value`);
+  }
+  return result.value;
+}
+function requireVirSelectionOutput(value, operation) {
+  if (typeof value !== "object" || value === null || !("action" in value) || !("scheduleNextFrame" in value)) {
+    throw new Error(`VIR selection ${operation} returned an invalid transition`);
+  }
+  return (
+    /** @type {VirSelectionOutput} */
+    value
+  );
+}
+function callVirSelection(runtime, timed, name, args) {
+  const started = virSelectionNow();
+  if (timed && runtime.callTimed !== void 0) {
+    const result = runtime.callTimed(name, ...args);
+    return {
+      value: result.value,
+      timings: result.timings,
+      wallMs: virSelectionNow() - started
+    };
+  }
+  return {
+    value: runtime.call(name, ...args),
+    timings: null,
+    wallMs: virSelectionNow() - started
+  };
+}
+function sumVirSelectionTimings(values) {
+  const result = {};
+  for (const value of values) {
+    if (value === null) continue;
+    for (const [name, duration] of Object.entries(value)) {
+      result[name] = (result[name] ?? 0) + duration;
+    }
+  }
+  return result;
+}
+function createVirSelectionPlayerHost(runtime, animation, renderer, scheduler = {
+  request: window.requestAnimationFrame.bind(window),
+  cancel: window.cancelAnimationFrame.bind(window)
+}, observer = null, observeDispatch = null) {
+  const createStarted = virSelectionNow();
+  const projectStarted = virSelectionNow();
+  const projected = projectVirSelectionAnimation(animation);
+  const projectMs = virSelectionNow() - projectStarted;
+  const mounted = callVirSelection(runtime, true, VIR_SELECTION_MOUNT, [projected]);
+  const player = requireVirSelectionMount(mounted.value, "mount");
+  const initial = callVirSelection(runtime, true, VIR_SELECTION_SNAPSHOT, [player]);
+  let output = requireVirSelectionOutput(initial.value, "snapshot");
+  let pendingFrame = null;
+  let disposed = false;
+  const initialRenderStarted = virSelectionNow();
+  renderer.render(output.action);
+  const initialRendered = virSelectionNow();
+  observer?.({
+    kind: "create",
+    operation: "create",
+    runtimeTimings: sumVirSelectionTimings([mounted.timings, initial.timings]),
+    runtimeWallMs: mounted.wallMs + initial.wallMs,
+    projectMs,
+    renderMs: initialRendered - initialRenderStarted,
+    totalMs: initialRendered - createStarted
+  });
+  function requireLive() {
+    if (disposed) throw new Error("VIR selection player host is disposed");
+  }
+  function cancelPending() {
+    if (pendingFrame !== null) {
+      scheduler.cancel(pendingFrame);
+      pendingFrame = null;
+    }
+  }
+  function schedule() {
+    if (!disposed && pendingFrame === null) pendingFrame = scheduler.request(tick);
+  }
+  function dispatch(event) {
+    requireLive();
+    const measuring = observer !== null && (observeDispatch?.() ?? true);
+    const started = measuring ? virSelectionNow() : 0;
+    const call = callVirSelection(runtime, measuring, VIR_SELECTION_DISPATCH, [
+      player,
+      projectVirSelectionEvent(event)
+    ]);
+    output = requireVirSelectionOutput(call.value, event.kind);
+    const renderStarted = measuring ? virSelectionNow() : 0;
+    renderer.render(output.action);
+    if (measuring) {
+      const rendered = virSelectionNow();
+      observer?.({
+        kind: "dispatch",
+        operation: event.kind,
+        runtimeTimings: call.timings,
+        runtimeWallMs: call.wallMs,
+        projectMs: 0,
+        renderMs: rendered - renderStarted,
+        totalMs: rendered - started
+      });
+    }
+    if (output.scheduleNextFrame) schedule();
+    else cancelPending();
+  }
+  function tick(timestamp) {
+    pendingFrame = null;
+    if (!disposed) dispatch({ kind: "tick", timestamp });
+  }
+  if (output.scheduleNextFrame) schedule();
+  return {
+    advance() {
+      dispatch({ kind: "advance" });
+    },
+    pause() {
+      dispatch({ kind: "pause" });
+    },
+    seek(frame) {
+      dispatch({ kind: "seek", frame });
+    },
+    playTo(frame, loopAfter) {
+      dispatch({ kind: "playTo", frame, loopAfter });
+    },
+    loopAt(frame) {
+      dispatch({ kind: "loopAt", frame });
+    },
+    snapshot() {
+      requireLive();
+      return output.action;
+    },
+    dispose() {
+      if (disposed) return;
+      disposed = true;
+      cancelPending();
+      renderer.dispose?.();
+      runtime.call(VIR_SELECTION_DISPOSE, player);
+    }
+  };
+}
+
+// player_js/animate_vir_widget.js
+var e = React.createElement;
+function isActive(playback) {
+  return playback === "playing" || playback === "looping" || playback === "finishingLoop";
+}
 function AnimateVirWidget(props) {
   var rpc = useRpcSession();
   var rpcRef = React.useRef(rpc);
-  var mountIdRef = React.useRef("");
-  if (mountIdRef.current === "") {
-    mountIdRef.current = "illuminate-vir-animation-" + String(nextMountId++);
-  }
-  var mountId = mountIdRef.current;
+  var containerRef = React.useRef(null);
+  var playerRef = React.useRef(null);
+  var playbackRef = React.useRef("paused");
   var _revision = React.useState("");
   var revision = _revision[0];
   var setRevision = _revision[1];
   var _status = React.useState("Loading animation\u2026");
   var status = _status[0];
   var setStatus = _status[1];
-  var animationKey = JSON.stringify(props.animData);
+  var _frame = React.useState(0);
+  var frame = _frame[0];
+  var setFrame = _frame[1];
+  var _playback = React.useState(
+    /** @type {AnimatePlayback} */
+    "paused"
+  );
+  var playback = _playback[0];
+  var setPlayback = _playback[1];
   React.useEffect(
     function() {
       rpcRef.current = rpc;
@@ -6571,20 +6817,8 @@ function AnimateVirWidget(props) {
       var disposed = false;
       var interval = null;
       var check = function() {
-        Promise.all([
-          statAsset(rpcRef.current, props.wasmPath),
-          statPackageSetAssets(rpcRef.current, props.packageSetPath)
-        ]).then(function(assets) {
-          if (!disposed) {
-            var packageAssets = assets[1];
-            setRevision(
-              JSON.stringify(
-                [assets[0], ...packageAssets].map(function(asset) {
-                  return asset.revision;
-                })
-              )
-            );
-          }
+        statVirRuntimeRevision(rpcRef.current, props.wasmPath, props.packageSetPath).then(function(nextRevision) {
+          if (!disposed) setRevision(nextRevision);
         }).catch(function(error) {
           if (!disposed) setStatus(String(error));
         });
@@ -6601,43 +6835,62 @@ function AnimateVirWidget(props) {
   );
   React.useEffect(
     function() {
-      if (revision === "") return void 0;
+      const container = containerRef.current;
+      if (revision === "" || container === null) return void 0;
       var disposed = false;
       var service = null;
-      var handle = null;
+      var player = null;
       setStatus("Loading animation\u2026");
-      acquireService(rpcRef.current, props.wasmPath, props.packageSetPath).then(function(loaded) {
+      acquireVirRuntimeService(rpcRef.current, props.wasmPath, props.packageSetPath).then(function(loaded) {
         if (disposed) {
-          releaseService(loaded);
+          releaseVirRuntimeService(loaded);
           return;
         }
         service = loaded;
-        handle = loaded.runtime.call(
-          "Illuminate.Animation.Vir.mountInfoView",
-          "#" + mountId,
-          animationKey
-        );
+        var domRenderer = createSelectionDomRenderer(props.animData, container);
+        player = createVirSelectionPlayerHost(loaded.runtime, props.animData, {
+          render(selection) {
+            domRenderer.render(selection);
+            if (disposed) return;
+            var current = (
+              /** @type {AnimateSelection} */
+              selection
+            );
+            playbackRef.current = current.playback;
+            setFrame(current.frame);
+            setPlayback(current.playback);
+          },
+          dispose() {
+            domRenderer.dispose?.();
+          }
+        });
+        playerRef.current = player;
         setStatus("");
       }).catch(function(error) {
+        if (service !== null) {
+          releaseVirRuntimeService(service);
+          service = null;
+        }
         if (!disposed) setStatus(String(error));
       });
       return function() {
         disposed = true;
-        if (service !== null) {
-          if (handle !== null) {
-            service.runtime.call("Illuminate.Animation.Vir.disposePlayer", handle);
-          }
-          releaseService(service);
-        }
+        if (playerRef.current === player) playerRef.current = null;
+        player?.dispose();
+        if (service !== null) releaseVirRuntimeService(service);
       };
     },
-    [revision, animationKey, props.wasmPath, props.packageSetPath, mountId]
+    [revision, props.animData, props.wasmPath, props.packageSetPath]
   );
+  var maxFrame = Math.max(0, props.animData.totalFrames - 1);
+  var active = isActive(playback);
+  var ready = status === "";
   return e(
     "section",
     {
       style: { minWidth: 0 },
-      "data-illuminate-vir-state": status === "" ? "ready" : "loading",
+      "data-illuminate-vir-state": ready ? "ready" : "loading",
+      "data-illuminate-player-boundary": "selection",
       onClick: function(event) {
         event.stopPropagation();
       },
@@ -6645,11 +6898,81 @@ function AnimateVirWidget(props) {
         event.stopPropagation();
       }
     },
-    e("div", { id: mountId }),
-    status === "" ? null : e("pre", { style: { margin: 0, whiteSpace: "pre-wrap" } }, status)
+    e(
+      "div",
+      { style: { padding: "4px", background: "white" } },
+      e("div", {
+        ref: containerRef,
+        style: { width: "100%", cursor: "pointer" },
+        onClick: function() {
+          if (playbackRef.current === "waiting") playerRef.current?.advance();
+        }
+      }),
+      e(
+        "div",
+        {
+          style: {
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            marginTop: "6px"
+          }
+        },
+        e(
+          "button",
+          {
+            disabled: !ready,
+            onClick: function() {
+              playerRef.current?.advance();
+            },
+            style: {
+              fontSize: "14px",
+              width: "28px",
+              height: "28px",
+              border: "1px solid #ccc",
+              borderRadius: "4px",
+              background: "white",
+              cursor: ready ? "pointer" : "wait"
+            },
+            "aria-label": active ? "Pause" : "Play"
+          },
+          active ? "\u23F8" : "\u25B6"
+        ),
+        e("input", {
+          type: "range",
+          min: 0,
+          max: maxFrame,
+          value: Math.min(frame, maxFrame),
+          disabled: !ready,
+          "aria-label": "Animation progress",
+          style: { flex: 1 },
+          onInput: (
+            /** @param {React.FormEvent<HTMLInputElement>} event */
+            function(event) {
+              var requested = Number.parseInt(event.currentTarget.value, 10);
+              if (Number.isSafeInteger(requested) && requested >= 0) {
+                playerRef.current?.seek(requested);
+              }
+            }
+          )
+        }),
+        e(
+          "span",
+          {
+            style: {
+              fontSize: "11px",
+              color: "#666",
+              minWidth: "5.5em",
+              textAlign: "right"
+            }
+          },
+          String(frame) + " / " + String(maxFrame)
+        )
+      )
+    ),
+    ready ? null : e("pre", { style: { margin: "4px", whiteSpace: "pre-wrap" } }, status)
   );
 }
 export {
-  decodeVirAsset,
   AnimateVirWidget as default
 };

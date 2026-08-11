@@ -423,6 +423,10 @@ The preview prepares its hit-test geometry once. When the staged VIR
 assets are available, hover queries run in browser-resident Lean; the
 small selector beside the preview can switch back to the existing Lean
 server RPC path. Missing or incompatible VIR assets fall back to RPC.
+Expanding the live benchmark below a preview runs the same grid of
+queries through the cached Lean-server scene and VIR, checks every
+result, and compares their end-to-end median, p95, and maximum
+latency.
 
 ### Parameterized Diagrams
 
@@ -445,9 +449,11 @@ body uses the parameter as an ordinary value.
 ### The `#animate` Command
 
 The `#animate` command builds a step-based animation and plays it in
-the infoview with a play/pause button and scrub bar. Its player runs
-in Lean through VIR; React owns only the widget mount and releases the
-player when the widget is replaced:
+the infoview with a play/pause button and scrub bar. Its compact
+timeline and playback state run in Lean through VIR, while the browser
+keeps the generated SVG and patch tables and applies the segment and
+local frame selected by Lean. React owns the widget mount and releases
+the retained player when the widget is replaced:
 
 ```lean
 #animate
@@ -495,6 +501,20 @@ widget bundle and stage its matching runtime and package set with:
 ```sh
 npm run stage:vir
 ```
+
+To build every runtime showcase without starting a server, run:
+
+```sh
+npm run build:demos
+python3 -m http.server 8765 --bind 127.0.0.1 --directory test_output
+```
+
+Then open `http://127.0.0.1:8765/`. The generated index links the
+animation comparison, HitScene performance viewer, and focused seek,
+loop, segment, dual-player, clipping, and gradient fixtures. Set the
+FIR package environment variables described below before `build:demos`
+to refresh those optional backends; otherwise an already staged
+immutable package is reused when present.
 
 Differential tests can additionally use a self-contained FIR-native
 Wasm package. Copy a tested package to the ignored `native-player/`
@@ -598,14 +618,18 @@ ILLUMINATE_FIR_HIT_SCENE_DIR=/absolute/immutable/package \
 ```
 
 Without the FIR variable, the page remains useful as a VIR baseline
-and marks FIR as pending. The raw report is written to
-`test_output/hit-scene-performance.json`; the visual report is at
+and marks FIR as pending. The medium and tiered raw reports are
+written to `test_output/hit-scene-performance.json` and
+`test_output/hit-scene-tier-performance.json`; the visual report is at
 <http://127.0.0.1:8765/hit-scene-performance.html>. Its live button
-reruns the browser-resident backends in the current tab. A tiered VIR
-diagnostic separates small bounds, mixed geometry, and large
-path-heavy scenes, including query-class breakdowns:
+reruns all three browser-resident workload tiers in the current tab.
+The `#diagram` InfoView has a separate collapsible live comparison
+that runs its current prepared scene through cached Lean-server RPC
+and VIR. VIR's separate diagnostic also preserves query-class
+breakdowns:
 
 ```sh
+npm run measure:hit-scene -- --suite --quick --require-fir
 npm run profile:vir-hit-scene
 npm run stage:hit-scene-performance
 ```

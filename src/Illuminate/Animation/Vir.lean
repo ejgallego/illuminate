@@ -233,6 +233,13 @@ def dispatchSelectionPlayer
   RuntimeRef.set mount.state { player := next.state, action := next.selection }
   pure (selectionOutput next.selection next.scheduleNextFrame)
 
+/-- Applies a timestamp tick without constructing a generic player event at the VIR boundary. -/
+@[vir_export]
+def dispatchSelectionTick
+    (handle : SelectionPlayerHandle)
+    (timestamp : Float) : RuntimeM SelectionPlayerOutput :=
+  dispatchSelectionPlayer handle (.tick timestamp)
+
 /-- Releases an owned compact VIR player handle. -/
 @[vir_export]
 def disposeSelectionPlayer (handle : SelectionPlayerHandle) : RuntimeM Unit :=

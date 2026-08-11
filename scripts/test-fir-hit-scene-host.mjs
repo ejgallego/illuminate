@@ -6,6 +6,7 @@ import {
     queryPreparedHitSceneRpc,
 } from "../player_js/fir_hit_scene.js";
 import { createHitSceneTimingStore } from "../player_js/hit_scene_comparison.js";
+import { runResidentRpcHitSceneBenchmark } from "../player_js/hit_scene_live_benchmark.js";
 
 function adjacentFloat(value, direction) {
     const storage = new ArrayBuffer(8);
@@ -33,6 +34,13 @@ const liveScenes = new Set();
 const createdScenes = [];
 const queries = [];
 const disposedScenes = [];
+function queryResult(x, y) {
+    return x === 0 && y === 0
+        ? { kind: "tag", value: 7, label: "center" }
+        : x >= -1 && x <= 1 && y >= -1 && y <= 1
+          ? { kind: "something" }
+          : { kind: "nothing" };
+}
 const adapter = {
     createHitScene(source) {
         assert.equal(source, encodedScene);
@@ -53,14 +61,13 @@ const adapter = {
     hitTest(scene, x, y) {
         assert.ok(liveScenes.has(scene), "query used a scene that is not live");
         queries.push({ scene, x, y });
-        const result =
-            x === 0 && y === 0
-                ? { kind: "tag", value: 7, label: "center" }
-                : x >= -1 && x <= 1 && y >= -1 && y <= 1
-                  ? { kind: "something" }
-                  : { kind: "nothing" };
+        return queryResult(x, y);
+    },
+    hitTestDiagnostic(scene, x, y) {
+        assert.ok(liveScenes.has(scene), "query used a scene that is not live");
+        queries.push({ scene, x, y });
         return {
-            result,
+            result: queryResult(x, y),
             timings: {
                 inputMs: 0.001,
                 executeMs: 0.004,
@@ -174,5 +181,41 @@ assert.ok(snapshot.fir.maxMs >= 0);
 store.reset();
 assert.equal(store.snapshot().fir.count, 0);
 assert.equal(store.snapshot().rpc.count, 0);
+
+let benchmarkClock = 0;
+const benchmarkProgress = [];
+const liveBenchmark = await runResidentRpcHitSceneBenchmark({
+    points: [
+        { x: 0, y: 0 },
+        { x: 2, y: 2 },
+    ],
+    queryRpc: async (x, y) =>
+        x === 0 && y === 0 ? { kind: "tag", value: 7, label: "center" } : { kind: "nothing" },
+    queryVir: (x, y) =>
+        x === 0 && y === 0 ? { kind: "tag", value: 7, label: "center" } : { kind: "nothing" },
+    warmupRounds: 1,
+    measuredRounds: 2,
+    now: () => (benchmarkClock += 0.01),
+    onProgress: (completed, total) => benchmarkProgress.push([completed, total]),
+});
+assert.equal(liveBenchmark.samplesPerBackend, 4);
+assert.equal(liveBenchmark.rpc.count, 4);
+assert.equal(liveBenchmark.vir.count, 4);
+assert.ok(Math.abs(liveBenchmark.rpcOverVir - 1) < 1e-9);
+assert.deepEqual(benchmarkProgress, [
+    [1, 3],
+    [2, 3],
+    [3, 3],
+]);
+await assert.rejects(
+    runResidentRpcHitSceneBenchmark({
+        points: [{ x: 0, y: 0 }],
+        queryRpc: async () => ({ kind: "nothing" }),
+        queryVir: () => ({ kind: "something" }),
+        warmupRounds: 0,
+        measuredRounds: 1,
+    }),
+    /disagreed/,
+);
 
 console.log("FIR hit-scene host and timing contracts passed");

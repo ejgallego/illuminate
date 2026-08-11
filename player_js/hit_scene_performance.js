@@ -114,7 +114,7 @@ function profileCandidates(candidates, fixture) {
     const profiled = candidates.map((candidate) => {
         /** @type {any[]} */
         const observations = [];
-        const host = candidate.createProfiled((/** @type {any} */ observation) => {
+        const host = candidate.createProfiled(fixture, (/** @type {any} */ observation) => {
             if (observation.kind === "query") observations.push(observation);
         });
         return { candidate, host, observations };
@@ -145,8 +145,7 @@ function profileCandidates(candidates, fixture) {
     }
 }
 
-/** @param {any} fixture */
-async function loadVirCandidate(fixture) {
+async function loadVirCandidate() {
     const runtimeModuleUrl = new URL("./vir/sdk/js/vir-runtime.js", location.href).href;
     const runtimeModule = await import(runtimeModuleUrl);
     const wasmBytes = await fetchBytes("./vir/sdk/wasm/vir-upstream.wasm");
@@ -185,7 +184,7 @@ async function loadVirCandidate(fixture) {
                 host.dispose();
             },
         },
-        createProfiled(/** @type {any} */ observer) {
+        createProfiled(/** @type {any} */ fixture, /** @type {any} */ observer) {
             return createVirHitSceneHost(runtime, fixture.encodedScene, observer);
         },
         dispose() {
@@ -194,8 +193,7 @@ async function loadVirCandidate(fixture) {
     };
 }
 
-/** @param {any} fixture */
-async function loadFirCandidate(fixture) {
+async function loadFirCandidate() {
     const buildResponse = await fetch("./fir-hit-scene/BUILD.json", { cache: "no-store" });
     if (buildResponse.status === 404) return null;
     const build = await requireOk(buildResponse, "FIR BUILD.json").then((response) =>
@@ -224,7 +222,8 @@ async function loadFirCandidate(fixture) {
         name: "fir",
         metadata: {
             available: true,
-            measurementMode: "live browser FIR adapter hitTest",
+            measurementMode:
+                "live untimed FIR hitTest; separate hitTestDiagnostic phase attribution",
             wasmBytes: wasmBytes.byteLength,
             firCommit: build.sources?.fir?.commit,
             illuminateCommit: build.sources?.illuminate?.commit,
@@ -240,60 +239,84 @@ async function loadFirCandidate(fixture) {
                 host.dispose();
             },
         },
-        createProfiled(/** @type {any} */ observer) {
+        createProfiled(/** @type {any} */ fixture, /** @type {any} */ observer) {
             return createFirHitSceneHost(adapter, fixture.encodedScene, observer);
         },
         dispose() {},
     };
 }
 
-async function runLiveMeasurement() {
-    const { fetchHitSceneBenchmark, runPairedHitSceneBenchmark } =
+/** @param {any[]} candidates @param {any} fixture @param {any} runPairedHitSceneBenchmark */
+async function measureLiveFixture(candidates, fixture, runPairedHitSceneBenchmark) {
+    const production = /** @type {any} */ (
+        await runPairedHitSceneBenchmark(
+            fixture,
+            Object.fromEntries(
+                candidates.map((candidate) => [candidate.name, candidate.benchmark]),
+            ),
+            { warmupRounds: 1, measuredRounds: 5, retainSamples: true, now },
+        )
+    );
+    const diagnostics = profileCandidates(candidates, fixture);
+    const firAvailable = candidates.some((candidate) => candidate.name === "fir");
+    const firOverVir = firAvailable
+        ? {
+              median: production.fir.query.medianMs / production.vir.query.medianMs,
+              pairedQueryRatio: {
+                  median: summarize(
+                      production.fir.samples.map(
+                          (/** @type {number} */ sample, /** @type {number} */ index) =>
+                              sample / production.vir.samples[index],
+                      ),
+                  ).medianMs,
+              },
+          }
+        : null;
+    return {
+        fixture: {
+            name: fixture.name,
+            geometryClass: fixture.geometryClass,
+            schemaVersion: fixture.schemaVersion,
+            encodedBytes: fixture.encodedScene.length,
+            queryCount: fixture.queries.length,
+        },
+        production,
+        diagnostics,
+        deltas: { firOverVir },
+    };
+}
+
+/** @param {(completed: number, total: number, name: string) => void} [onProgress] */
+async function runLiveMeasurement(onProgress) {
+    const { fetchHitSceneBenchmarkSuite, runPairedHitSceneBenchmark } =
         await import("../scripts/lib/hit-scene-benchmark.mjs");
-    const fixture = await fetchHitSceneBenchmark("./hit-scene-benchmark.json");
+    const suite = await fetchHitSceneBenchmarkSuite("./hit-scene-benchmark-suite.json");
     /** @type {any[]} */
-    const candidates = [await loadVirCandidate(fixture)];
-    const fir = await loadFirCandidate(fixture);
+    const candidates = [await loadVirCandidate()];
+    const fir = await loadFirCandidate();
     if (fir !== null) candidates.push(fir);
     try {
-        const production = /** @type {any} */ (
-            await runPairedHitSceneBenchmark(
-                fixture,
-                Object.fromEntries(
-                    candidates.map((candidate) => [candidate.name, candidate.benchmark]),
-                ),
-                { warmupRounds: 1, measuredRounds: 5, retainSamples: true, now },
-            )
-        );
-        const diagnostics = profileCandidates(candidates, fixture);
-        const firOverVir =
-            fir === null
-                ? null
-                : {
-                      median: production.fir.query.medianMs / production.vir.query.medianMs,
-                      pairedQueryRatio: {
-                          median: summarize(
-                              production.fir.samples.map(
-                                  (/** @type {number} */ sample, /** @type {number} */ index) =>
-                                      sample / production.vir.samples[index],
-                              ),
-                          ).medianMs,
-                      },
-                  };
+        const workloads = [];
+        for (const [index, fixture] of suite.fixtures.entries()) {
+            workloads.push(
+                await measureLiveFixture(candidates, fixture, runPairedHitSceneBenchmark),
+            );
+            onProgress?.(index + 1, suite.fixtures.length, fixture.name);
+        }
+        const primary =
+            workloads.find((workload) => workload.fixture.geometryClass === "mixed") ??
+            workloads[0];
+        if (primary === undefined) throw new Error("live workload suite is empty");
         return {
-            schemaVersion: "illuminate.hit-scene-performance/v1",
+            schemaVersion: "illuminate.hit-scene-tier-performance/v1",
             generatedAt: new Date().toISOString(),
             environment: { browser: navigator.userAgent },
-            fixture: {
-                schemaVersion: fixture.schemaVersion,
-                encodedBytes: fixture.encodedScene.length,
-                queryCount: fixture.queries.length,
-            },
+            fixture: primary.fixture,
             protocol: {
                 warmupRounds: 1,
                 measuredRounds: 5,
                 profileRounds: 2,
-                samplesPerBackend: fixture.queries.length * 5,
+                samplesPerBackend: primary.fixture.queryCount * 5,
                 balancedQueryBackendOrder: candidates.length > 1,
                 pairedQuerySamples: candidates.length > 1,
                 creationExcludedFromQuerySamples: true,
@@ -302,9 +325,10 @@ async function runLiveMeasurement() {
             backends: Object.fromEntries(
                 candidates.map((candidate) => [candidate.name, candidate.metadata]),
             ),
-            production,
-            diagnostics,
-            deltas: { firOverVir },
+            production: primary.production,
+            diagnostics: primary.diagnostics,
+            deltas: primary.deltas,
+            workloads,
             caveats: [
                 "This report was measured live in the current browser tab.",
                 "The existing JavaScript widget has no independent hit-test algorithm; its baseline is Lean server RPC in the InfoView.",
@@ -409,7 +433,9 @@ function render(report) {
                 element(
                     "output",
                     "relative-label",
-                    `${ratio(result.query.medianMs / fastest)} fastest`,
+                    result.query.medianMs === fastest
+                        ? "1.00× reference (fastest)"
+                        : `${ratio(result.query.medianMs / fastest)} the fastest median`,
                 ),
             );
         } else {
@@ -426,8 +452,9 @@ function render(report) {
 
     const headline = requireElement("[data-headline-ratio]");
     const delta = report.deltas?.firOverVir;
-    headline.textContent = delta
-        ? `${ratio(delta.pairedQueryRatio?.median ?? delta.median)} FIR / VIR paired median`
+    const firOverVir = delta?.pairedQueryRatio?.median ?? delta?.median;
+    headline.textContent = firOverVir
+        ? `FIR ${ratio(1 / firOverVir)} faster than VIR on the mixed workload`
         : "FIR comparison pending";
 
     const phases = requireElement("[data-phase-grid]");
@@ -520,7 +547,68 @@ function renderWorkloadProfile(profile) {
     }
 }
 
+/** @param {any} report */
+function renderTierPerformance(report) {
+    const container = requireElement("[data-workloads]");
+    container.replaceChildren();
+    for (const workload of report.workloads ?? []) {
+        const vir = workload.production?.vir?.query?.medianMs;
+        const fir = workload.production?.fir?.query?.medianMs;
+        const present = [vir, fir].filter(
+            /** @returns {value is number} */ (value) => Number.isFinite(value),
+        );
+        const scale = Math.max(0.000001, ...present);
+        const card = element("article", "workload-card");
+        const title = element("div", "workload-title");
+        title.append(
+            element("h3", "", workload.fixture.name),
+            element("span", "badge", workload.fixture.geometryClass),
+        );
+        const bars = element("div", "tier-bars");
+        for (const [backend, value] of [
+            ["vir", vir],
+            ["fir", fir],
+        ]) {
+            const row = element("div", `tier-row ${backend}`);
+            const track = element("i", "");
+            const fill = element("b", "");
+            fill.style.width = Number.isFinite(value)
+                ? `${Math.max(1, (100 * value) / scale)}%`
+                : "0";
+            track.append(fill);
+            row.append(
+                element("span", "", backend.toUpperCase()),
+                track,
+                element("output", "", milliseconds(value)),
+            );
+            bars.append(row);
+        }
+        const speedup = Number.isFinite(vir) && Number.isFinite(fir) ? vir / fir : null;
+        card.append(
+            title,
+            metric("Encoded scene", `${workload.fixture.encodedBytes.toLocaleString()} B`),
+            metric("Queries", workload.fixture.queryCount.toLocaleString()),
+            bars,
+            element(
+                "output",
+                "tier-ratio",
+                speedup === null ? "FIR package not staged" : `FIR ${speedup.toFixed(1)}× faster`,
+            ),
+        );
+        container.append(card);
+    }
+}
+
 async function loadWorkloadProfile() {
+    const tierResponse = await fetch("./hit-scene-tier-performance.json", {
+        cache: "no-store",
+    });
+    if (tierResponse.ok) {
+        renderTierPerformance(
+            await requireOk(tierResponse, "FIR/VIR tier report").then((item) => item.json()),
+        );
+        return;
+    }
     const response = await fetch("./vir-hit-scene-profile.json", { cache: "no-store" });
     if (response.status === 404) return;
     renderWorkloadProfile(
@@ -545,19 +633,33 @@ const liveButton = requireElement("[data-run-live]");
 liveButton.addEventListener("click", async function () {
     if (!(liveButton instanceof HTMLButtonElement)) return;
     const liveStatus = requireElement("[data-live-status]");
+    const liveProgress = requireElement("[data-live-progress]");
     liveButton.disabled = true;
-    liveStatus.textContent = "Loading runtimes and measuring 301 queries…";
+    liveProgress.hidden = false;
+    if (liveProgress instanceof HTMLProgressElement) {
+        liveProgress.max = 3;
+        liveProgress.value = 0;
+    }
+    liveStatus.textContent = "Loading VIR, FIR, and the three retained-scene workloads…";
     try {
-        const report = await runLiveMeasurement();
+        const report = await runLiveMeasurement(function (completed, total, name) {
+            if (liveProgress instanceof HTMLProgressElement) {
+                liveProgress.max = total;
+                liveProgress.value = completed;
+            }
+            liveStatus.textContent = `Measured ${name} (${completed} of ${total} workloads).`;
+        });
         render(/** @type {HitScenePerformanceReport} */ (report));
+        renderTierPerformance(report);
         liveStatus.textContent =
             report.production.fir === undefined
-                ? "Live VIR measurement complete; no FIR package is staged."
-                : "Live paired VIR/FIR measurement complete.";
+                ? "Live VIR workload suite complete; no FIR package is staged."
+                : "Live paired VIR/FIR workload suite complete; every result matched.";
     } catch (error) {
         liveStatus.textContent = `Live measurement failed: ${error instanceof Error ? error.message : String(error)}`;
     } finally {
         liveButton.disabled = false;
+        liveProgress.hidden = true;
     }
 });
 

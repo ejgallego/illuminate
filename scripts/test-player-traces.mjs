@@ -515,7 +515,7 @@ function normalizeVirSelectionOutput(output, label) {
     };
 }
 
-function replayVirSelections(data, events) {
+function replayVirSelections(data, events, scalarTicks = false) {
     const mounted = runtime.call(
         "Illuminate.Animation.Vir.mountSelectionPlayer",
         projectVirSelectionAnimation(data),
@@ -530,13 +530,20 @@ function replayVirSelections(data, events) {
             ),
         ];
         for (const [index, event] of events.entries()) {
+            const scalarTick = scalarTicks && event.kind === "tick";
             actions.push(
                 normalizeVirSelectionOutput(
-                    runtime.call(
-                        "Illuminate.Animation.Vir.dispatchSelectionPlayer",
-                        handle,
-                        projectVirSelectionEvent(event),
-                    ),
+                    scalarTick
+                        ? runtime.call(
+                              "Illuminate.Animation.Vir.dispatchSelectionTick",
+                              handle,
+                              event.timestamp,
+                          )
+                        : runtime.call(
+                              "Illuminate.Animation.Vir.dispatchSelectionPlayer",
+                              handle,
+                              projectVirSelectionEvent(event),
+                          ),
                     `VIR selection event ${index}`,
                 ),
             );
@@ -579,6 +586,14 @@ try {
             ),
             expected,
             `${testCase.name} (VIR selection)`,
+        );
+        assert.deepEqual(
+            materializeSelections(
+                testCase.data,
+                replayVirSelections(testCase.data, testCase.events, true),
+            ),
+            expected,
+            `${testCase.name} (VIR scalar tick)`,
         );
         const nativeResult = native.replayTrace(testCase.data, testCase.events);
         assert.equal(nativeResult.ok, true, nativeResult.error);
@@ -649,5 +664,5 @@ try {
     runtime.dispose();
 }
 
-const backends = `legacy/VIR-JSON/VIR-typed/VIR-selection/FIR-native${selection === null ? "" : "/FIR-selection"}`;
+const backends = `legacy/VIR-JSON/VIR-typed/VIR-selection/VIR-scalar-tick/FIR-native${selection === null ? "" : "/FIR-selection"}`;
 console.log(`${cases.length} ${backends} player traces matched`);

@@ -209,7 +209,7 @@ changes, text content, and ordinary attributes. Additional tests cover
 two independent VIR selection handles, use-after-release rejection,
 pending callback cancellation, and idempotent host disposal.
 
-## Next performance question
+## Scalar tick experiment
 
 Selection-only VIR spends approximately 0.107 ms of the 0.154 ms
 browser callback in interpreted execution. The direct split now shows
@@ -217,14 +217,33 @@ that `JSL` plus `RuntimeRef` is a minority of paired execute time and
 that retaining animation/state is a net win once boundary conversion
 is included.
 
-The next experiment should keep the retained generic `PlayerEvent`
-path as the differential oracle and measure a specialized scalar tick
-export against it. That will price custom-inductive event marshaling
-without changing state ownership. If the saving is only around the
-current 0.010–0.011 ms input phase, application-level specialization
-is not justified; the larger remaining target is interpreter execution
-of the transition itself. Full VIR should remain the end-to-end
-rendering control.
+The retained generic `PlayerEvent` path remains the oracle. A new
+diagnostic export, `dispatchSelectionTick`, accepts the same player
+handle plus one `Float` timestamp and constructs `.tick` inside Lean.
+All 107 differential traces match through both retained paths.
+
+Seven interleaved rounds with 500 warm-up and 5,000 measured ticks per
+workload produced:
+
+| Workload                       | Generic marshal | Scalar marshal | Generic total | Scalar total | Saving |
+| ------------------------------ | --------------: | -------------: | ------------: | -----------: | -----: |
+| Pause-driven slide show        |       0.0019 ms |      0.0007 ms |     0.0538 ms |    0.0534 ms | 0.3 µs |
+| Morphing arrows and final loop |       0.0018 ms |      0.0006 ms |     0.0492 ms |    0.0487 ms | 0.5 µs |
+
+The scalar entry removes about two-thirds of event marshalling, but
+whole-call time improves by only 0.6–1.0%. Interpreted transition
+execution remains approximately 0.043–0.048 ms and is unchanged.
+Production therefore keeps the single generic event protocol; the
+scalar export remains a focused diagnostic and regression oracle. No
+VIR marshalling API change is justified by this result.
+
+Run the experiment with:
+
+```sh
+npm run measure:vir-scalar-tick
+```
+
+It writes `test_output/perf/vir-scalar-tick.json`.
 
 For FIR, bulk animation marshaling is no longer the priority. Its
 remaining tens-of-microseconds gap is distributed across event

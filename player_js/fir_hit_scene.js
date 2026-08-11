@@ -29,6 +29,7 @@
  * @typedef {{
  *   createHitScene: (encodedScene: string) => FirHitSceneCreateResult,
  *   hitTest: (scene: unknown, x: number, y: number) => FirHitSceneQueryResult,
+ *   hitTestDiagnostic?: (scene: unknown, x: number, y: number) => FirHitSceneQueryResult,
  *   disposeHitScene: (scene: unknown) => void
  * }} FirHitSceneAdapter
  * @typedef {{
@@ -107,6 +108,10 @@ export function createFirHitSceneHost(adapter, encodedScene, observer = null) {
     const created = requireHitSceneCreate(adapter.createHitScene(encodedScene));
     const completed = hitSceneNow();
     const scene = created.scene;
+    const query =
+        observer !== null && adapter.hitTestDiagnostic !== undefined
+            ? adapter.hitTestDiagnostic.bind(adapter)
+            : adapter.hitTest.bind(adapter);
     let disposed = false;
 
     observer?.({
@@ -129,7 +134,7 @@ export function createFirHitSceneHost(adapter, encodedScene, observer = null) {
                 throw new Error("hit-scene coordinates must be finite numbers");
             }
             const queryStarted = hitSceneNow();
-            const { response, result } = requireHitSceneQuery(adapter.hitTest(scene, x, y));
+            const { response, result } = requireHitSceneQuery(query(scene, x, y));
             const queryCompleted = hitSceneNow();
             observer?.({
                 backend: "fir",

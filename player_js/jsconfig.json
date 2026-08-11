@@ -16,6 +16,7 @@
         "comparison.js",
         "fir_live_player.js",
         "fir_hit_scene.js",
+        "hit_scene_live_benchmark.js",
         "hit_scene_comparison.js",
         "hit_scene_performance.js",
         "reveal.js",

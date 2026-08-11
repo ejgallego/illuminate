@@ -98,7 +98,8 @@ function requireVirSelectionMount(result, operation) {
         throw new Error(`VIR selection ${operation} returned an invalid result`);
     }
     if (result.kind === "error") {
-        throw new Error(`VIR selection ${operation} failed: ${String(result.value)}`);
+        const message = "value" in result ? result.value : "unknown error";
+        throw new Error(`VIR selection ${operation} failed: ${String(message)}`);
     }
     if (result.kind !== "ok" || !("value" in result)) {
         throw new Error(`VIR selection ${operation} returned an invalid Except value`);

@@ -7,14 +7,22 @@ import { pathToFileURL } from "node:url";
 
 import { createFirHitSceneHost } from "../player_js/fir_hit_scene.js";
 import { createVirHitSceneHost } from "../player_js/vir_hit_scene.js";
-import { loadHitSceneBenchmark, runPairedHitSceneBenchmark } from "./lib/hit-scene-benchmark.mjs";
+import {
+    loadHitSceneBenchmark,
+    loadHitSceneBenchmarkSuite,
+    runPairedHitSceneBenchmark,
+} from "./lib/hit-scene-benchmark.mjs";
 import { createVirRuntime } from "../test_output/vir/sdk/js/vir-runtime-node.js";
 
 const quick = process.argv.includes("--quick");
 const requireFir = process.argv.includes("--require-fir");
+const suiteMode = process.argv.includes("--suite");
 const outputArgument = process.argv.find((argument) => argument.startsWith("--output="));
 const outputPath =
-    outputArgument?.slice("--output=".length) || "test_output/hit-scene-performance.json";
+    outputArgument?.slice("--output=".length) ||
+    (suiteMode
+        ? "test_output/hit-scene-tier-performance.json"
+        : "test_output/hit-scene-performance.json");
 const warmupRounds = quick ? 1 : 2;
 const measuredRounds = quick ? 2 : 10;
 const profileRounds = quick ? 1 : 5;
@@ -100,7 +108,7 @@ async function fileExists(filename) {
     }
 }
 
-async function loadVir(fixture) {
+async function loadVir() {
     const wasmBytes = await readFile("test_output/vir/sdk/wasm/vir-upstream.wasm");
     const descriptorUrl = new URL(
         "../test_output/vir/module-sets/Illuminate/Diagram/HitScene/Vir.irpkg-set.json",
@@ -131,7 +139,7 @@ async function loadVir(fixture) {
                 host.dispose();
             },
         },
-        createProfiled(observer) {
+        createProfiled(fixture, observer) {
             return createVirHitSceneHost(runtime, fixture.encodedScene, observer);
         },
         dispose() {
@@ -140,7 +148,7 @@ async function loadVir(fixture) {
     };
 }
 
-async function loadFir(fixture) {
+async function loadFir() {
     const filenames = {
         adapter: path.join(firStageRoot, "illuminate-hit-scene-browser-adapter.mjs"),
         build: path.join(firStageRoot, "BUILD.json"),
@@ -167,7 +175,8 @@ async function loadFir(fixture) {
         name: "fir",
         metadata: {
             available: true,
-            measurementMode: "adapter hitTest v1; phase timing remains enabled",
+            measurementMode:
+                "untimed adapter hitTest for production; hitTestDiagnostic for phase attribution",
             wasmBytes: wasmBytes.byteLength,
             wasmSha256: sha256(wasmBytes),
             firCommit: build.sources?.fir?.commit,
@@ -184,7 +193,7 @@ async function loadFir(fixture) {
                 host.dispose();
             },
         },
-        createProfiled(observer) {
+        createProfiled(fixture, observer) {
             return createFirHitSceneHost(adapter, fixture.encodedScene, observer);
         },
         dispose() {},
@@ -194,7 +203,7 @@ async function loadFir(fixture) {
 function profileCandidates(candidates, fixture) {
     const profiled = candidates.map((candidate) => {
         const observations = [];
-        const host = candidate.createProfiled((observation) => {
+        const host = candidate.createProfiled(fixture, (observation) => {
             if (observation.kind === "query") observations.push(observation);
         });
         return { candidate, host, observations };
@@ -222,13 +231,15 @@ function profileCandidates(candidates, fixture) {
     }
 }
 
-const fixture = await loadHitSceneBenchmark("test_output/hit-scene-benchmark.json");
-const candidates = [await loadVir(fixture)];
-const fir = await loadFir(fixture);
+const fixtures = suiteMode
+    ? (await loadHitSceneBenchmarkSuite("test_output/hit-scene-benchmark-suite.json")).fixtures
+    : [await loadHitSceneBenchmark("test_output/hit-scene-benchmark.json")];
+const candidates = [await loadVir()];
+const fir = await loadFir();
 if (fir !== null) candidates.push(fir);
 if (requireFir) assert.ok(fir, "stage the immutable FIR HitScene package before measuring");
 
-try {
+async function measureFixture(fixture) {
     const production = await runPairedHitSceneBenchmark(
         fixture,
         Object.fromEntries(candidates.map((candidate) => [candidate.name, candidate.benchmark])),
@@ -257,24 +268,40 @@ try {
                       ),
                   ),
               };
+    return {
+        fixture: {
+            name: fixture.name,
+            geometryClass: fixture.geometryClass,
+            schemaVersion: fixture.schemaVersion,
+            encodedBytes: fixture.encodedScene.length,
+            queryCount: fixture.queries.length,
+        },
+        production,
+        diagnostics,
+        deltas: { firOverVir },
+    };
+}
+
+try {
+    const measurements = [];
+    for (const fixture of fixtures) measurements.push(await measureFixture(fixture));
+    const primary = measurements[0];
     const report = {
-        schemaVersion: "illuminate.hit-scene-performance/v1",
+        schemaVersion: suiteMode
+            ? "illuminate.hit-scene-tier-performance/v1"
+            : "illuminate.hit-scene-performance/v1",
         generatedAt: new Date().toISOString(),
         environment: {
             node: process.version,
             platform: process.platform,
             architecture: process.arch,
         },
-        fixture: {
-            schemaVersion: fixture.schemaVersion,
-            encodedBytes: fixture.encodedScene.length,
-            queryCount: fixture.queries.length,
-        },
+        fixture: primary.fixture,
         protocol: {
             warmupRounds,
             measuredRounds,
             profileRounds,
-            samplesPerBackend: fixture.queries.length * measuredRounds,
+            samplesPerBackend: primary.fixture.queryCount * measuredRounds,
             balancedQueryBackendOrder: candidates.length > 1,
             pairedQuerySamples: candidates.length > 1,
             creationExcludedFromQuerySamples: true,
@@ -283,13 +310,14 @@ try {
         backends: Object.fromEntries(
             candidates.map((candidate) => [candidate.name, candidate.metadata]),
         ),
-        production,
-        diagnostics,
-        deltas: { firOverVir },
+        production: primary.production,
+        diagnostics: primary.diagnostics,
+        deltas: primary.deltas,
+        ...(suiteMode ? { workloads: measurements } : {}),
         caveats: [
             "Production wall time uses each adapter's normal public query path.",
             "VIR detailed timing is disabled in production samples and enabled only for diagnostics.",
-            "The FIR v1 adapter returns internal phase timings on its public hitTest path, so its production samples still include that instrumentation cost.",
+            "FIR detailed timing is disabled in production samples and enabled only for diagnostics.",
             "The FIR/VIR headline uses paired measurements of the same query and round; absolute times remain sensitive to ambient machine load.",
             "RPC is measured only inside the Lean infoview and is not represented by this Node report.",
         ],
@@ -300,10 +328,16 @@ try {
             {
                 ok: true,
                 outputPath: path.resolve(outputPath),
-                backends: Object.fromEntries(
-                    Object.entries(production).map(([name, result]) => [name, result.query]),
-                ),
-                firOverVir,
+                workloads: measurements.map((measurement) => ({
+                    name: measurement.fixture.name,
+                    backends: Object.fromEntries(
+                        Object.entries(measurement.production).map(([name, result]) => [
+                            name,
+                            result.query,
+                        ]),
+                    ),
+                    firOverVir: measurement.deltas.firOverVir,
+                })),
             },
             null,
             2,

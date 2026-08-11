@@ -42,22 +42,16 @@ const { createIlluminateHitSceneAdapter, fetchIlluminateHitSceneAdapter } = adap
 assert.equal(typeof createIlluminateHitSceneAdapter, "function");
 assert.equal(typeof fetchIlluminateHitSceneAdapter, "function");
 assert.equal(build.capabilities?.browserAdapter?.apiVersion, "fir.illuminate-hit-scene.browser/v1");
-assert.deepEqual(build.capabilities?.browserAdapter?.methods, [
+assert.deepEqual(build.capabilities?.browserAdapter?.operations, [
     "createHitScene",
     "hitTest",
+    "hitTestDiagnostic",
     "disposeHitScene",
 ]);
-assert.deepEqual(build.capabilities?.browserAdapter?.timing?.query, [
-    "inputMs",
-    "executeMs",
-    "decodeMs",
-    "rewindMs",
-    "residualMs",
-    "totalMs",
-]);
+assert.equal(build.capabilities?.inputLayout?.version, "lean-4.32-Illuminate.HitScene/v1");
 assert.equal(
-    build.capabilities?.browserAdapter?.timing?.intervals,
-    "non-overlapping; totalMs is independently measured",
+    build.capabilities?.ownership?.version,
+    "fir.illuminate-hit-scene.persistent-checkpoint/v1",
 );
 
 function sha256(value) {
@@ -71,19 +65,24 @@ assert.deepEqual(WebAssembly.Module.imports(module), []);
 assert.equal(build.wasm.functionImportCount, 0);
 assert.equal(build.wasm.memoryImportCount, 0);
 assert.equal(build.wasm.memoryOwner, "module");
-assert.deepEqual(build.wasm.memoryExports, ["memory"]);
 assert.deepEqual(
     WebAssembly.Module.exports(module).filter(({ kind }) => kind !== "function"),
     [{ name: "memory", kind: "memory" }],
 );
 
-assert.ok(Array.isArray(build.entries), "FIR package does not declare its compiled entries");
-assert.ok(
-    build.entries.some(({ sourceName }) => sourceName === "Illuminate.HitScene.query"),
-    "FIR package does not compile Illuminate.HitScene.query",
+assert.equal(build.entry?.sourceName, "Illuminate.HitScene.query");
+assert.deepEqual(
+    build.entry?.parameters?.map(({ lean, transport }) => ({ lean, transport })),
+    [
+        { lean: "HitScene", transport: undefined },
+        { lean: "Float", transport: "uint64-bits" },
+        { lean: "Float", transport: "uint64-bits" },
+    ],
 );
-const declaredExports = build.entries.map(({ exportName }) => exportName);
-const runtimeExports = [
+assert.equal(build.entry?.result?.lean, "HitSceneResult");
+const expectedFunctionExports = [
+    "Illuminate.HitScene.query",
+    "Illuminate.HitScene.query._fir_bit_exact",
     "fir_heap_alloc",
     "fir_heap_frontier",
     "fir_heap_rewind",
@@ -94,10 +93,14 @@ assert.deepEqual(
         .filter(({ kind }) => kind === "function")
         .map(({ name }) => name)
         .sort(),
-    [...new Set([...declaredExports, ...runtimeExports])].sort(),
-    "Wasm function exports differ from the declared entries and ownership surface",
+    expectedFunctionExports.sort(),
+    "Wasm function exports differ from the entry and ownership surface",
 );
-assert.equal(build.wasm.functionExportCount, new Set([...declaredExports, ...runtimeExports]).size);
+assert.deepEqual(
+    build.wasm.exports,
+    WebAssembly.Module.exports(module).map(({ name, kind }) => ({ name, kind })),
+    "BUILD.json does not describe the exact Wasm exports",
+);
 
 const expectedSources = new Map([
     [
@@ -182,13 +185,13 @@ assert.deepEqual(tagged.query(0, 0), { kind: "tag", value: 7, label: "center" })
 
 const createObservation = observations.find(({ kind }) => kind === "create");
 assert.ok(createObservation, "adapter reported no creation observation");
-for (const phase of ["parseMs", "encodeMs", "instantiateMs", "totalMs"]) {
+for (const phase of ["parseProjectMs", "encodeMs", "instantiateMs", "totalMs", "overheadMs"]) {
     assert.equal(typeof createObservation.adapterTimings?.[phase], "number", `missing ${phase}`);
 }
 const queryObservations = observations.filter(({ kind }) => kind === "query");
 assert.ok(queryObservations.length > 0);
 for (const observation of queryObservations) {
-    for (const phase of ["inputMs", "executeMs", "decodeMs", "rewindMs", "residualMs", "totalMs"]) {
+    for (const phase of ["inputMs", "executeMs", "decodeMs", "rewindMs", "totalMs", "overheadMs"]) {
         assert.equal(typeof observation.adapterTimings?.[phase], "number", `missing ${phase}`);
     }
     assert.equal(observation.memory?.frontierBefore, observation.memory?.persistentCheckpoint);

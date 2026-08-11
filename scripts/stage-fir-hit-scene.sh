@@ -25,6 +25,7 @@ fi
 required=(
   BUILD.json
   SHA256SUMS
+  hit-scene-benchmark.json
   illuminate-hit-scene-browser-adapter.mjs
   illuminate-hit-scene.wasm
   illuminate-hit-scene.wasm.json

@@ -33,7 +33,7 @@ def previewAnimation (steps : List Step)
 -/
 
 open Lean Widget in
-/-- VIR InfoView shell used to mount owned animation players. -/
+/-- Selection-only VIR InfoView player that leaves SVG patch data in the browser. -/
 @[widget_module]
 meta def animateWidget : Lean.Widget.Module where
   javascript := include_str "../../../player_js/generated/animate_vir_widget.js"

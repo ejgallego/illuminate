@@ -4,6 +4,73 @@
 import * as React from "react";
 import { useRpcSession } from "@leanprover/infoview";
 
+// player_js/hit_scene_live_benchmark.js
+function sameHitSceneResult(left, right) {
+  return left.kind === right.kind && (right.kind !== "tag" || left.value === right.value && left.label === right.label);
+}
+function summarize(samples) {
+  const sorted = [...samples].sort((left, right) => left - right);
+  const percentile = (fraction) => sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * fraction))] ?? 0;
+  return {
+    count: samples.length,
+    meanMs: samples.reduce((sum, value) => sum + value, 0) / samples.length,
+    medianMs: percentile(0.5),
+    p95Ms: percentile(0.95),
+    maxMs: sorted.at(-1) ?? 0
+  };
+}
+async function runResidentRpcHitSceneBenchmark(options) {
+  const warmupRounds = options.warmupRounds ?? 1;
+  const measuredRounds = options.measuredRounds ?? 4;
+  const now = options.now ?? (() => performance.now());
+  if (options.points.length === 0) throw new Error("hit-scene benchmark needs query points");
+  if (!Number.isSafeInteger(warmupRounds) || warmupRounds < 0) {
+    throw new Error("warmupRounds must be a nonnegative integer");
+  }
+  if (!Number.isSafeInteger(measuredRounds) || measuredRounds <= 0) {
+    throw new Error("measuredRounds must be a positive integer");
+  }
+  const rpcSamples = [];
+  const virSamples = [];
+  const totalRounds = warmupRounds + measuredRounds;
+  for (let round = 0; round < totalRounds; round += 1) {
+    if (options.isCurrent !== void 0 && !options.isCurrent()) {
+      throw new Error("diagram changed during the live hit-scene benchmark");
+    }
+    const measured = round >= warmupRounds;
+    const rpcFirst = round % 2 === 0;
+    for (const point of options.points) {
+      let rpcResult = null;
+      let virResult = null;
+      for (const backend of rpcFirst ? ["rpc", "vir"] : ["vir", "rpc"]) {
+        const started = now();
+        if (backend === "rpc") rpcResult = await options.queryRpc(point.x, point.y);
+        else virResult = options.queryVir(point.x, point.y);
+        const duration = now() - started;
+        if (measured) {
+          if (backend === "rpc") rpcSamples.push(duration);
+          else virSamples.push(duration);
+        }
+      }
+      if (rpcResult === null || virResult === null || !sameHitSceneResult(rpcResult, virResult)) {
+        throw new Error(
+          `cached RPC and VIR disagreed at (${point.x.toFixed(3)}, ${point.y.toFixed(3)})`
+        );
+      }
+    }
+    options.onProgress?.(round + 1, totalRounds);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+  const rpc = summarize(rpcSamples);
+  const vir = summarize(virSamples);
+  return {
+    samplesPerBackend: rpcSamples.length,
+    rpc,
+    vir,
+    rpcOverVir: vir.medianMs > 0 ? rpc.medianMs / vir.medianMs : Number.POSITIVE_INFINITY
+  };
+}
+
 // player_js/vir_hit_scene.js
 var mountEntry = "Illuminate.HitScene.Vir.mount";
 var queryEntry = "Illuminate.HitScene.Vir.query";
@@ -6794,6 +6861,27 @@ async function acquireVirRuntimeService(rpc, wasmPath, packageSetPath) {
 
 // player_js/diagram_widget.js
 var e = React.createElement;
+function hitBenchmarkPoints(svg) {
+  const viewBox = svg.viewBox.baseVal;
+  if (!(viewBox.width > 0) || !(viewBox.height > 0)) {
+    throw new Error("the rendered SVG has no usable view box");
+  }
+  const points = [];
+  const divisions = 7;
+  for (let row = 0; row < divisions; row += 1) {
+    for (let column = 0; column < divisions; column += 1) {
+      points.push({
+        x: viewBox.x + viewBox.width * (column + 0.5) / divisions,
+        y: -(viewBox.y + viewBox.height * (row + 0.5) / divisions)
+      });
+    }
+  }
+  return points;
+}
+function hitBenchmarkMilliseconds(value) {
+  if (value < 1e-3) return `${(value * 1e3).toFixed(2)} \xB5s`;
+  return `${value.toFixed(3)} ms`;
+}
 function renderControl(p, i, values, setValues) {
   var val = values[i];
   if (p.kind === "slider") {
@@ -6912,6 +7000,19 @@ function diagram_widget_default(props) {
   var _revision = React.useState("");
   var revision = _revision[0];
   var setRevision = _revision[1];
+  var sceneRevision = React.useRef(0);
+  var _hitBenchmark = React.useState(
+    /** @type {Awaited<ReturnType<typeof runResidentRpcHitSceneBenchmark>> | null} */
+    null
+  );
+  var hitBenchmark = _hitBenchmark[0];
+  var setHitBenchmark = _hitBenchmark[1];
+  var _hitBenchmarkStatus = React.useState("Run against the current prepared scene.");
+  var hitBenchmarkStatus = _hitBenchmarkStatus[0];
+  var setHitBenchmarkStatus = _hitBenchmarkStatus[1];
+  var _hitBenchmarkRunning = React.useState(false);
+  var hitBenchmarkRunning = _hitBenchmarkRunning[0];
+  var setHitBenchmarkRunning = _hitBenchmarkRunning[1];
   React.useEffect(
     function() {
       rpcRef.current = rs;
@@ -6928,6 +7029,8 @@ function diagram_widget_default(props) {
     function() {
       setSvg(props.initialSvg || "");
       latestHitScene.current = props.initialHitScene || "";
+      sceneRevision.current += 1;
+      setHitBenchmark(null);
       try {
         virControllerRef.current?.replace(latestHitScene.current);
       } catch (error) {
@@ -7045,6 +7148,8 @@ function diagram_widget_default(props) {
           pixelWidth: latestPixelWidth.current
         }).then(function(resp) {
           latestHitScene.current = resp.hitScene;
+          sceneRevision.current += 1;
+          setHitBenchmark(null);
           if (virControllerRef.current !== null) {
             try {
               virControllerRef.current.replace(resp.hitScene);
@@ -7112,6 +7217,60 @@ function diagram_widget_default(props) {
     if (hitTimer.current) clearTimeout(hitTimer.current);
     setHitInfo(null);
   }, []);
+  var runHitBenchmark = React.useCallback(
+    async function() {
+      const controller = virControllerRef.current;
+      const container = svgRef.current;
+      const svgElement = container?.querySelector("svg");
+      if (controller === null || virStatus !== "ready") {
+        setHitBenchmarkStatus("VIR must be ready before comparing it with cached RPC.");
+        return;
+      }
+      if (!(svgElement instanceof SVGSVGElement)) {
+        setHitBenchmarkStatus("The current diagram has no rendered SVG.");
+        return;
+      }
+      const expectedRevision = sceneRevision.current;
+      setHitBenchmarkRunning(true);
+      setHitBenchmark(null);
+      setHitBenchmarkStatus("Warming cached RPC and VIR\u2026");
+      try {
+        const result = await runResidentRpcHitSceneBenchmark({
+          points: hitBenchmarkPoints(svgElement),
+          queryRpc: async function(x, y) {
+            return (
+              /** @type {Promise<HitInfo>} */
+              rpcRef.current.call("Illuminate.hitTestPreparedDiagram", {
+                id: props.exprId,
+                x,
+                y
+              })
+            );
+          },
+          queryVir: function(x, y) {
+            return controller.query(x, y);
+          },
+          isCurrent: function() {
+            return sceneRevision.current === expectedRevision;
+          },
+          onProgress: function(completed, total) {
+            setHitBenchmarkStatus(`Measuring round ${completed} of ${total}\u2026`);
+          }
+        });
+        setHitBenchmark(result);
+        setHitBenchmarkStatus(
+          `${result.samplesPerBackend} matched queries per backend; rendering excluded.`
+        );
+      } catch (error) {
+        setHitBenchmarkStatus(
+          `Comparison failed: ${error instanceof Error ? error.message : String(error)}`
+        );
+      } finally {
+        setHitBenchmarkRunning(false);
+      }
+    },
+    [props.exprId, virStatus]
+  );
   React.useEffect(function() {
     return function() {
       if (hitTimer.current) clearTimeout(hitTimer.current);
@@ -7130,6 +7289,7 @@ function diagram_widget_default(props) {
   var controls = hasParams ? params.map(function(p, i) {
     return renderControl(p, i, values, setValues);
   }) : null;
+  const renderedHitBenchmark = hitBenchmark;
   return e(
     "div",
     { style: { padding: "4px", background: "white", position: "relative" } },
@@ -7180,6 +7340,134 @@ function diagram_widget_default(props) {
       onMouseMove,
       onMouseLeave
     }),
+    e(
+      "details",
+      {
+        style: {
+          marginTop: "7px",
+          padding: "7px 9px",
+          border: "1px solid #dce3ef",
+          borderRadius: "7px",
+          color: "#475569",
+          fontSize: "10px"
+        }
+      },
+      e(
+        "summary",
+        { style: { cursor: "pointer", fontWeight: "700" } },
+        "Live cached-LSP vs in-browser VIR benchmark"
+      ),
+      e(
+        "div",
+        {
+          style: {
+            display: "flex",
+            gap: "8px",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginTop: "8px"
+          }
+        },
+        e("span", null, "Same prepared HitScene, coordinates, and Lean query semantics."),
+        e(
+          "button",
+          {
+            type: "button",
+            disabled: hitBenchmarkRunning || virStatus !== "ready",
+            onClick: function() {
+              void runHitBenchmark();
+            },
+            style: {
+              padding: "4px 7px",
+              border: "1px solid #aab8cc",
+              borderRadius: "5px",
+              whiteSpace: "nowrap",
+              cursor: hitBenchmarkRunning ? "wait" : "pointer"
+            }
+          },
+          hitBenchmarkRunning ? "Measuring\u2026" : "Run live comparison"
+        )
+      ),
+      e("div", { style: { marginTop: "6px", color: "#64748b" } }, hitBenchmarkStatus),
+      renderedHitBenchmark ? e(
+        "div",
+        {
+          style: {
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: "7px",
+            marginTop: "8px"
+          }
+        },
+        .../** @type {const} */
+        ["rpc", "vir"].map(function(name) {
+          const summary = renderedHitBenchmark[name];
+          const maximum = Math.max(
+            renderedHitBenchmark.rpc.medianMs,
+            renderedHitBenchmark.vir.medianMs,
+            1e-6
+          );
+          return e(
+            "div",
+            {
+              key: name,
+              style: {
+                padding: "7px",
+                borderRadius: "6px",
+                background: name === "rpc" ? "#fff8dc" : "#eef3ff"
+              }
+            },
+            e(
+              "div",
+              { style: { display: "flex", justifyContent: "space-between" } },
+              e(
+                "strong",
+                null,
+                name === "rpc" ? "Cached Lean LSP RPC" : "VIR in browser"
+              ),
+              e("output", null, hitBenchmarkMilliseconds(summary.medianMs))
+            ),
+            e(
+              "div",
+              {
+                style: {
+                  height: "5px",
+                  marginTop: "5px",
+                  overflow: "hidden",
+                  borderRadius: "999px",
+                  background: "#d9e0eb"
+                }
+              },
+              e("i", {
+                style: {
+                  display: "block",
+                  width: `${Math.max(1, 100 * summary.medianMs / maximum)}%`,
+                  height: "100%",
+                  background: name === "rpc" ? "#d69e2e" : "#5278df"
+                }
+              })
+            ),
+            e(
+              "small",
+              { style: { display: "block", marginTop: "4px" } },
+              `p95 ${hitBenchmarkMilliseconds(summary.p95Ms)} \xB7 max ${hitBenchmarkMilliseconds(summary.maxMs)}`
+            )
+          );
+        }),
+        e(
+          "output",
+          {
+            style: {
+              gridColumn: "1 / -1",
+              color: "#3559b7",
+              fontWeight: "800",
+              textAlign: "right"
+            }
+          },
+          Number.isFinite(renderedHitBenchmark.rpcOverVir) ? `Cached LSP RPC is ${renderedHitBenchmark.rpcOverVir.toFixed(1)}\xD7 the VIR median wall time` : "VIR completed below this timer's resolution"
+        )
+      ) : null
+    ),
     hitLabel ? e(
       "div",
       {

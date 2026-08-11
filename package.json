@@ -1,5 +1,6 @@
 {
     "scripts": {
+        "build:demos": "bash scripts/build-demos.sh",
         "build:vir-widget": "node scripts/build-vir-widget.mjs",
         "demo:comparison": "bash scripts/demo-comparison.sh",
         "demo:hit-scene": "bash scripts/demo-hit-scene.sh",
@@ -11,6 +12,7 @@
         "measure:vir-hit-scene-probes": "node --no-warnings scripts/measure-vir-hit-scene-probes.mjs",
         "profile:vir-hit-scene": "node --no-warnings scripts/profile-vir-hit-scene.mjs",
         "measure:vir-selection-core": "node --no-warnings scripts/measure-vir-selection-core.mjs",
+        "measure:vir-scalar-tick": "node --no-warnings scripts/measure-vir-scalar-tick.mjs",
         "stage:fir-live": "bash scripts/stage-fir-live-player.sh",
         "stage:fir-hit-scene": "bash scripts/stage-fir-hit-scene.sh",
         "stage:hit-scene-performance": "bash scripts/stage-hit-scene-performance.sh",

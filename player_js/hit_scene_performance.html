@@ -91,6 +91,11 @@
                 color: #91a2c4;
                 font-size: 11px;
             }
+            .live-runner progress {
+                width: min(180px, 100%);
+                height: 7px;
+                accent-color: #5bd6aa;
+            }
             .backend-cards {
                 display: grid;
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -322,6 +327,48 @@
             .query-class output {
                 text-align: right;
             }
+            .tier-bars {
+                display: grid;
+                grid-column: 1 / -1;
+                gap: 7px;
+                margin-top: 4px;
+            }
+            .tier-row {
+                display: grid;
+                grid-template-columns: 34px minmax(40px, 1fr) 72px;
+                gap: 8px;
+                align-items: center;
+                color: #8799bc;
+                font:
+                    9px ui-monospace,
+                    monospace;
+            }
+            .tier-row > i {
+                height: 8px;
+                overflow: hidden;
+                border-radius: 999px;
+                background: #070e1d;
+            }
+            .tier-row b {
+                display: block;
+                height: 100%;
+                border-radius: inherit;
+                background: #6d96ff;
+            }
+            .tier-row.fir b {
+                background: #5bd6aa;
+            }
+            .tier-row output {
+                text-align: right;
+            }
+            .tier-ratio {
+                grid-column: 1 / -1;
+                color: #89e5c4;
+                font:
+                    750 12px ui-monospace,
+                    monospace;
+                text-align: right;
+            }
             .notes ul {
                 margin: 0;
                 padding-left: 20px;
@@ -356,10 +403,12 @@
                 <strong data-headline-ratio>—</strong>
             </div>
             <div class="live-runner">
-                <button type="button" data-run-live>Run live browser comparison</button>
+                <button type="button" data-run-live>Run live three-workload suite</button>
+                <progress data-live-progress max="3" value="0" hidden></progress>
                 <span data-live-status>
-                    The stored report loads automatically; this button measures again in this tab.
-                    Lean RPC remains an InfoView-only baseline.
+                    The stored report loads automatically; this reruns bounds, mixed, and path-heavy
+                    scenes in this tab. A live cached-LSP/VIR comparison is available inside each
+                    <code>#diagram</code> InfoView.
                 </span>
             </div>
             <section class="backend-cards" data-backend-cards></section>
@@ -372,10 +421,11 @@
                 <div class="phase-grid" data-phase-grid></div>
             </section>
             <section class="details">
-                <h2>VIR execution by workload</h2>
+                <h2>FIR/VIR execution by workload</h2>
                 <p>
-                    A separate diagnostic run contrasts small bounds, mixed geometry, and a large
-                    path-heavy retained scene. Bars share one scale across all three workloads.
+                    Paired untimed production queries contrast small bounds, mixed geometry, and a
+                    large path-heavy retained scene. The stored results appear on load; the live
+                    suite replaces all three. VIR and FIR bars share a local scale in each workload.
                 </p>
                 <div class="workload-grid" data-workloads></div>
             </section>
