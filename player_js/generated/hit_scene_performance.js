@@ -324,6 +324,37 @@ function createFirHitSceneHost(adapter, encodedScene, observer = null) {
   };
 }
 
+// player_js/hit_scene_performance_history.js
+var HIT_SCENE_PERFORMANCE_HISTORY_SCHEMA = "illuminate.hit-scene-performance-history-record/v1";
+function validateRecord(record, lineNumber) {
+  if (record?.schemaVersion !== HIT_SCENE_PERFORMANCE_HISTORY_SCHEMA) {
+    throw new Error(
+      `unsupported hit-scene performance history schema on line ${lineNumber}: ` + String(record?.schemaVersion)
+    );
+  }
+  if (typeof record.generatedAt !== "string" || !Number.isFinite(Date.parse(record.generatedAt))) {
+    throw new Error(`invalid hit-scene performance timestamp on line ${lineNumber}`);
+  }
+  if (!Array.isArray(record.workloads) || record.workloads.length === 0) {
+    throw new Error(`hit-scene performance history line ${lineNumber} has no workloads`);
+  }
+  return record;
+}
+function parseHitScenePerformanceHistory(source) {
+  return source.split(/\r?\n/).map((line) => line.trim()).filter((line) => line.length > 0).map((line, index) => {
+    try {
+      return validateRecord(JSON.parse(line), index + 1);
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        throw new Error(
+          `invalid JSON on hit-scene performance history line ${index + 1}`
+        );
+      }
+      throw error;
+    }
+  });
+}
+
 // player_js/vir_hit_scene.js
 var mountEntry = "Illuminate.HitScene.Vir.mount";
 var queryEntry = "Illuminate.HitScene.Vir.query";
@@ -1061,6 +1092,100 @@ function renderTierPerformance(report) {
     container.append(card);
   }
 }
+function workloadRatio(workload) {
+  const delta = workload.deltas?.firOverVir;
+  const value = delta?.pairedQueryRatio?.median ?? delta?.median;
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+function renderHistory(records) {
+  const panel = requireElement("[data-history-panel]");
+  const container = requireElement("[data-history]");
+  const usable = records.filter((record) => record.workloads.some(workloadRatio));
+  if (usable.length === 0) {
+    panel.hidden = true;
+    return;
+  }
+  const baselines = /* @__PURE__ */ new Map();
+  for (const record of usable) {
+    for (const workload of record.workloads) {
+      const value = workloadRatio(workload);
+      if (value !== null && !baselines.has(workload.fixture.name)) {
+        baselines.set(workload.fixture.name, value);
+      }
+    }
+  }
+  const recent = usable.slice(-12).toReversed();
+  const maximum = Math.max(
+    1,
+    ...recent.flatMap((record) => record.workloads.map(workloadRatio).filter(Number.isFinite))
+  );
+  requireElement("[data-history-summary]").textContent = `${usable.length.toLocaleString()} recorded paired run${usable.length === 1 ? "" : "s"}. The first retained ratio for each workload is its baseline; the vertical mark is 1\xD7.`;
+  container.replaceChildren();
+  for (const record of recent) {
+    const row = element("article", "history-run");
+    const heading = element("div", "history-heading");
+    const revision = record.source?.commit?.slice(0, 8) ?? "unknown source";
+    heading.append(
+      element("strong", "", record.label ?? new Date(record.generatedAt).toLocaleString()),
+      element("span", "", `${revision} \xB7 ${new Date(record.generatedAt).toLocaleString()}`)
+    );
+    const ratios = element("div", "history-ratios");
+    for (const workload of record.workloads) {
+      const value = workloadRatio(workload);
+      if (value === null) continue;
+      const baseline = baselines.get(workload.fixture.name) ?? value;
+      const change = 100 * (value - baseline) / baseline;
+      const cell = element("div", "history-ratio");
+      const title = element("div", "history-ratio-title");
+      title.append(
+        element("span", "", workload.fixture.name),
+        element(
+          "output",
+          "",
+          value <= 1 ? `FIR ${(1 / value).toFixed(2)}\xD7 faster` : `FIR/VIR ${value.toFixed(2)}\xD7`
+        )
+      );
+      const track = element("div", "history-track");
+      const fill = element("i", "");
+      fill.style.width = `${Math.max(1, 100 * value / maximum)}%`;
+      const unit = element("b", "");
+      unit.style.left = `${Math.min(99.5, 100 / maximum)}%`;
+      track.append(fill, unit);
+      cell.append(
+        title,
+        track,
+        element(
+          "small",
+          "",
+          `${value.toFixed(3)}\xD7 FIR/VIR \xB7 ${change >= 0 ? "+" : ""}${change.toFixed(1)}% vs baseline`
+        )
+      );
+      ratios.append(cell);
+    }
+    row.append(heading, ratios);
+    container.append(row);
+  }
+  panel.hidden = false;
+}
+async function loadHistory() {
+  try {
+    const response = await fetch("./hit-scene-performance-history.jsonl", {
+      cache: "no-store"
+    });
+    if (response.status === 404) return;
+    renderHistory(
+      parseHitScenePerformanceHistory(
+        await requireOk(response, "HitScene performance history").then(
+          (item) => item.text()
+        )
+      )
+    );
+  } catch (error) {
+    const panel = requireElement("[data-history-panel]");
+    requireElement("[data-history-summary]").textContent = `Could not load recorded history: ${error instanceof Error ? error.message : String(error)}`;
+    panel.hidden = false;
+  }
+}
 async function loadWorkloadProfile() {
   const tierResponse = await fetch("./hit-scene-tier-performance.json", {
     cache: "no-store"
@@ -1086,6 +1211,7 @@ async function main() {
       await response.json()
     );
     await loadWorkloadProfile();
+    await loadHistory();
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     requireElement("[data-status]").textContent = `Could not load measurement: ${message}`;

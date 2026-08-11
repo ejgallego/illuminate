@@ -376,11 +376,83 @@
                 font-size: 11px;
                 line-height: 1.6;
             }
+            .history-list {
+                display: grid;
+                gap: 10px;
+            }
+            .history-run {
+                display: grid;
+                grid-template-columns: minmax(160px, 0.55fr) minmax(0, 2fr);
+                gap: 16px;
+                padding: 13px;
+                border: 1px solid #293b61;
+                border-radius: 11px;
+                background: #0c162c;
+            }
+            .history-heading {
+                display: grid;
+                align-content: start;
+                gap: 5px;
+            }
+            .history-heading strong {
+                font-size: 11px;
+            }
+            .history-heading span,
+            .history-ratio small {
+                color: #8393b5;
+                font:
+                    9px ui-monospace,
+                    monospace;
+            }
+            .history-ratios {
+                display: grid;
+                grid-template-columns: repeat(3, minmax(120px, 1fr));
+                gap: 12px;
+            }
+            .history-ratio {
+                display: grid;
+                gap: 6px;
+            }
+            .history-ratio-title {
+                display: flex;
+                gap: 8px;
+                justify-content: space-between;
+                color: #acbada;
+                font-size: 10px;
+            }
+            .history-ratio-title output {
+                color: #89e5c4;
+                font-family: ui-monospace, monospace;
+            }
+            .history-track {
+                position: relative;
+                height: 8px;
+                overflow: hidden;
+                border-radius: 999px;
+                background: #070e1d;
+            }
+            .history-track i {
+                display: block;
+                height: 100%;
+                border-radius: inherit;
+                background: linear-gradient(90deg, #5bd6aa, #89aaff);
+            }
+            .history-track b {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                width: 1px;
+                background: #f3d37b;
+            }
             @media (max-width: 720px) {
                 .backend-cards {
                     grid-template-columns: 1fr;
                 }
                 .workload-grid {
+                    grid-template-columns: 1fr;
+                }
+                .history-run,
+                .history-ratios {
                     grid-template-columns: 1fr;
                 }
             }
@@ -428,6 +500,11 @@
                     suite replaces all three. VIR and FIR bars share a local scale in each workload.
                 </p>
                 <div class="workload-grid" data-workloads></div>
+            </section>
+            <section class="details" data-history-panel hidden>
+                <h2>Recorded FIR/VIR history</h2>
+                <p data-history-summary></p>
+                <div class="history-list" data-history></div>
             </section>
             <section class="notes">
                 <h2>Measurement notes</h2>

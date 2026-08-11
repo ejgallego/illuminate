@@ -24,6 +24,7 @@ assert.notEqual(
 );
 const packageRoot = await realpath(requestedRoot);
 const repositoryRoot = await realpath(new URL("..", import.meta.url));
+const expectedIlluminateCommit = "88dcfee895a55e804641bff485024cffec1b5419";
 
 const filenames = {
     adapter: "illuminate-hit-scene-browser-adapter.mjs",
@@ -37,6 +38,12 @@ const [adapterModule, build, manifest, wasmBytes] = await Promise.all([
     readFile(path.join(packageRoot, filenames.manifest), "utf8").then(JSON.parse),
     readFile(path.join(packageRoot, filenames.wasm)),
 ]);
+
+assert.equal(
+    build.sources?.illuminate?.commit,
+    expectedIlluminateCommit,
+    "FIR HitScene package pins an obsolete Illuminate revision",
+);
 
 const { createIlluminateHitSceneAdapter, fetchIlluminateHitSceneAdapter } = adapterModule;
 assert.equal(typeof createIlluminateHitSceneAdapter, "function");
@@ -136,6 +143,18 @@ for (const [source, expectedHash] of expectedSources) {
     );
     assert.equal(packaged?.sha256, expectedHash, `${source} is absent from BUILD.json`);
 }
+
+const expectedFixtureHash = "6a599bf13b9aa3dde0a463f0fea4961021241629b31889058c805d66c5d7b0a1";
+assert.equal(
+    sha256(await readFile(path.join(packageRoot, "hit-scene-benchmark.json"))),
+    expectedFixtureHash,
+    "packaged differential fixture does not match the v2 Illuminate fixture",
+);
+assert.equal(
+    sha256(await readFile(path.join(repositoryRoot, "test_output/hit-scene-benchmark.json"))),
+    expectedFixtureHash,
+    "local differential fixture does not match the v2 acceptance contract",
+);
 
 const adapter = await createIlluminateHitSceneAdapter({ bytes: wasmBytes, manifest, build });
 const taggedScene = JSON.stringify({

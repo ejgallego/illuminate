@@ -95,6 +95,21 @@ npm run test:fir-hit-scene-host
 npm run measure:hit-scene -- --suite --quick --require-fir
 ```
 
+The prepared consumer also provides a single acceptance command:
+
+```sh
+ILLUMINATE_FIR_HIT_SCENE_DIR=/absolute/immutable/v2-package \
+  npm run accept:fir-hit-scene
+```
+
+It atomically stages the admitted package, checks the host lifecycle,
+runs the Lean tests that generate the fixtures, checks all 1,009
+distinct oracle queries across the three workload tiers, records a
+compact FIR/VIR history entry in
+`test_output/hit-scene-performance-history.jsonl`, and refreshes the
+showcase. A differential mismatch stops the command before a history
+entry is written.
+
 ## Historical compiler-admission context
 
 The remainder of this file records the original v1 compiler and

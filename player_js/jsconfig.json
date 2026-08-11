@@ -19,6 +19,7 @@
         "hit_scene_live_benchmark.js",
         "hit_scene_comparison.js",
         "hit_scene_performance.js",
+        "hit_scene_performance_history.js",
         "reveal.js",
         "vir_reveal.js",
         "color_widget.js",

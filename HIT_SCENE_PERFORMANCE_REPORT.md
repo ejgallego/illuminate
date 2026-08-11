@@ -222,3 +222,23 @@ algorithmic cost shared by VIR and FIR with prepared bounds.
 The current memory validation still stays at 4,194,304 bytes for tag,
 untagged, miss, mixed, and instrumented mixed loops. No Illuminate
 workaround is needed for resource ownership after VIR PR #103.
+
+## Repeatable FIR v2 acceptance
+
+The Illuminate consumer is prepared for the regenerated FIR package.
+`npm run accept:fir-hit-scene`, with `ILLUMINATE_FIR_HIT_SCENE_DIR`
+naming an immutable package, validates the pinned source revision,
+source and fixture hashes, v2 input layout, zero imports, exact Wasm
+exports, module-owned memory, adapter phases, resident checkpoint
+behavior, disposal, and all 1,009 distinct oracle queries. Any
+admission or differential failure stops before recording a result.
+
+Successful suite runs append a compact JSONL record to
+`test_output/hit-scene-performance-history.jsonl`. Each record retains
+the Illuminate revision and dirty state, CPU and runtime environment,
+fixture hash, VIR package-set hash, FIR BUILD and Wasm hashes,
+protocol, summary statistics, phase attribution, and paired ratios.
+Raw samples and per-call diagnostic arrays stay in the individual
+report and are not copied into history. The showcase plots the latest
+twelve paired runs, uses the first retained measurement as the
+per-workload baseline, and marks the 1× FIR/VIR line explicitly.

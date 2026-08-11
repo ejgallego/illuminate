@@ -1,6 +1,7 @@
 {
     "scripts": {
         "build:demos": "bash scripts/build-demos.sh",
+        "accept:fir-hit-scene": "bash scripts/accept-fir-hit-scene.sh",
         "build:vir-widget": "node scripts/build-vir-widget.mjs",
         "demo:comparison": "bash scripts/demo-comparison.sh",
         "demo:hit-scene": "bash scripts/demo-hit-scene.sh",
@@ -28,6 +29,7 @@
         "test:fir-live-package": "node --no-warnings scripts/test-fir-live-package.mjs",
         "test:fir-hit-scene-package": "node --no-warnings scripts/test-fir-hit-scene-package.mjs",
         "test:hit-scene-benchmark": "node --no-warnings scripts/test-hit-scene-benchmark.mjs",
+        "test:hit-scene-history": "node --no-warnings scripts/test-hit-scene-performance-history.mjs",
         "test:player-traces": "node --no-warnings scripts/test-player-traces.mjs",
         "test:vir-traces": "npm run test:player-traces"
     },
