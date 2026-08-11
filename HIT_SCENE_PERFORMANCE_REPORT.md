@@ -111,6 +111,56 @@ VIR interpretation, not input or result conversion. Bounds-only calls
 are short enough that fixed boundary work is a larger share, but FIR
 still takes only 13.9% of VIR's median production time.
 
+## 2026-08-11 refreshed paired comparison
+
+The dependency refresh moved the Illuminate-local VIR checkout to
+upstream main `5703203` plus the minimal callback-phase timing branch
+`test/illuminate-main-timing` at `e033453`. The staged runtime Wasm is
+740,304 bytes with SHA-256
+`b6d4916cc644344211ce1e1300f29cab3d8b8b7341540a9aeede5126d280267e`.
+The accepted FIR reference Wasm remains 46,089 bytes with SHA-256
+`06708aac339cd7f6f7fcbe7c973dc29125e263925635d0311a0571d4428e97b7`.
+
+The refreshed ten-round tier-suite campaign retained every production
+sample and paired each FIR observation with the corresponding VIR
+query. The speedup column is derived from the median of those paired
+ratios, rather than from the ratio of the two independently summarized
+medians:
+
+| Workload       | VIR median | FIR median | Paired FIR / VIR | Paired FIR speedup | Paired median delta |
+| -------------- | ---------: | ---------: | ---------------: | -----------------: | ------------------: |
+| `bounds-small` |   0.032 ms |   0.006 ms |            18.5% |              5.42× |            -25.2 µs |
+| `mixed-medium` |   0.205 ms |   0.012 ms |             6.1% |             16.29× |           -193.3 µs |
+| `paths-large`  |   0.365 ms |   0.030 ms |             6.6% |             15.23× |           -332.7 µs |
+
+A separate balanced run held the VIR interpreter and boundary fixed
+while changing only the retained Lean algorithm:
+
+| Workload       | Reference VIR | Spatial VIR | Spatial speedup |
+| -------------- | ------------: | ----------: | --------------: |
+| `bounds-small` |      0.028 ms |    0.028 ms |           1.03× |
+| `mixed-medium` |      0.225 ms |    0.035 ms |           6.38× |
+| `paths-large`  |      0.528 ms |    0.449 ms |           1.18× |
+
+Both VIR variants again held module-owned memory at 4,194,304 bytes
+through 10,000 queries with two simultaneous instances. These two
+tables deliberately answer different questions: the first isolates
+runtime execution on the reference tree, while the second isolates the
+algorithm under VIR. The missing fourth cell is spatial FIR; its exact
+package request and acceptance matrix are in
+`FIR_SPATIAL_HIT_SCENE_HANDOFF.md`.
+
+Reproduce the refreshed files with:
+
+```sh
+npm run measure:hit-scene -- --suite --require-fir
+npm run measure:vir-spatial-hit-scene
+```
+
+Absolute values remain machine- and load-sensitive. The paired ratios,
+semantic equality checks, and stable-memory gate are the stronger
+signals.
+
 ## VIR diagnostic result
 
 The acceptance run uses one diagnostic warm-up followed by five
