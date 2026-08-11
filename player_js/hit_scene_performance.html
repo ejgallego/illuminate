@@ -198,6 +198,100 @@
                 gap: 10px;
                 align-content: start;
             }
+            .probe-inspector {
+                display: grid;
+                gap: 12px;
+                align-content: start;
+            }
+            .probe-chart {
+                padding: 14px;
+                border: 1px solid #2b3d65;
+                border-radius: 10px;
+                background: #0a1428;
+            }
+            .probe-chart header {
+                display: flex;
+                gap: 12px;
+                align-items: baseline;
+                justify-content: space-between;
+                margin-bottom: 12px;
+            }
+            .probe-chart header strong {
+                color: #dce6ff;
+                font-size: 12px;
+            }
+            .probe-chart header small {
+                color: #7183a7;
+                font-size: 9px;
+                text-align: right;
+            }
+            .probe-chart-rows {
+                display: grid;
+                gap: 10px;
+            }
+            .probe-chart-row {
+                display: grid;
+                gap: 5px;
+            }
+            .probe-chart-label {
+                display: flex;
+                gap: 10px;
+                align-items: center;
+                justify-content: space-between;
+                min-width: 0;
+            }
+            .probe-chart-label span {
+                overflow: hidden;
+                color: #aebcda;
+                font-size: 9px;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .probe-chart-label output {
+                color: #edf2ff;
+                font:
+                    700 9px ui-monospace,
+                    monospace;
+                white-space: nowrap;
+            }
+            .probe-chart-track {
+                position: relative;
+                height: 9px;
+                overflow: hidden;
+                border-radius: 999px;
+                background: #111f38;
+            }
+            .probe-chart-track i {
+                display: block;
+                width: 0;
+                height: 100%;
+                border-radius: inherit;
+                background: #789cff;
+                transition: width 180ms ease;
+            }
+            .probe-chart-row.spatial .probe-chart-track i {
+                background: #c68bd5;
+            }
+            .probe-chart-row.fir .probe-chart-track i {
+                background: #56d6a7;
+            }
+            .probe-chart-track b {
+                position: absolute;
+                top: 0;
+                bottom: 0;
+                left: 0;
+                width: 1px;
+                background: #f6d372;
+                box-shadow: 0 0 4px #f6d372;
+                transition: left 180ms ease;
+            }
+            .probe-chart-note {
+                display: block;
+                margin-top: 11px;
+                color: #7183a7;
+                font-size: 9px;
+                line-height: 1.45;
+            }
             .probe-backend {
                 display: grid;
                 gap: 7px;
@@ -697,13 +791,25 @@
                         <svg data-probe-svg aria-label="Interactive HitScene fixture"></svg>
                         <output data-probe-coordinates>—</output>
                     </div>
-                    <div class="probe-backends" data-probe-backends>
-                        <article class="probe-backend">
-                            <strong>Backends load on demand</strong>
-                            <small class="probe-timing">
-                                No scene crosses the boundary again after mount.
+                    <div class="probe-inspector">
+                        <section class="probe-chart" data-probe-chart data-state="idle">
+                            <header>
+                                <strong>Rolling median callback</strong>
+                                <small>shared zero scale · gold mark = Reference VIR</small>
+                            </header>
+                            <div class="probe-chart-rows" data-probe-chart-rows></div>
+                            <small class="probe-chart-note" data-probe-chart-note>
+                                Start the probe to compare matched queries.
                             </small>
-                        </article>
+                        </section>
+                        <div class="probe-backends" data-probe-backends>
+                            <article class="probe-backend">
+                                <strong>Backends load on demand</strong>
+                                <small class="probe-timing">
+                                    No scene crosses the boundary again after mount.
+                                </small>
+                            </article>
+                        </div>
                     </div>
                 </div>
             </section>

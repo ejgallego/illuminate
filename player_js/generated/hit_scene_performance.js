@@ -1497,6 +1497,9 @@ function installHitProbe() {
   const status = requireElement("[data-probe-status]");
   const coordinates = requireElement("[data-probe-coordinates]");
   const backendList = requireElement("[data-probe-backends]");
+  const chart = requireElement("[data-probe-chart]");
+  const chartRows = requireElement("[data-probe-chart-rows]");
+  const chartNote = requireElement("[data-probe-chart-note]");
   const svg = document.querySelector("[data-probe-svg]");
   if (!(toggle instanceof HTMLButtonElement) || !(fixtureSelect instanceof HTMLSelectElement) || !(autoInput instanceof HTMLInputElement) || !(svg instanceof SVGSVGElement)) {
     throw new Error("HitScene live probe controls are incomplete");
@@ -1515,6 +1518,7 @@ function installHitProbe() {
   }
   function renderBackends() {
     backendList.replaceChildren();
+    chartRows.replaceChildren();
     for (const candidate of session?.candidates ?? []) {
       const card = element("article", `probe-backend ${candidate.name}`);
       card.dataset.probeBackend = candidate.name;
@@ -1524,7 +1528,43 @@ function installHitProbe() {
         element("small", "probe-timing", "\u2014")
       );
       backendList.append(card);
+      const row = element("div", `probe-chart-row ${candidate.name}`);
+      row.dataset.probeChartBackend = candidate.name;
+      const label = element("div", "probe-chart-label");
+      label.append(element("span", "", candidate.label), element("output", "", "warming\u2026"));
+      const track = element("div", "probe-chart-track");
+      track.append(element("i", ""), element("b", ""));
+      row.append(label, track);
+      chartRows.append(row);
     }
+    chart.dataset.state = "warming";
+    chartNote.textContent = "Warming the rolling window; all bars share one zero-based time scale.";
+  }
+  function renderLiveComparison(observations) {
+    const reference = observations.find((observation) => observation.name === "vir");
+    if (reference === void 0) return;
+    const maximum = Math.max(0, ...observations.map((observation) => observation.median));
+    const scale = maximum > 0 ? maximum : 1;
+    const referencePosition = Math.min(100, 100 * reference.median / scale);
+    const minimumSamples = Math.min(...observations.map((observation) => observation.count));
+    for (const observation of observations) {
+      const row = chartRows.querySelector(`[data-probe-chart-backend="${observation.name}"]`);
+      if (!(row instanceof HTMLElement)) continue;
+      const fill = row.querySelector(".probe-chart-track i");
+      const marker = row.querySelector(".probe-chart-track b");
+      const output = row.querySelector("output");
+      if (fill instanceof HTMLElement) {
+        fill.style.width = `${Math.max(1, 100 * observation.median / scale)}%`;
+      }
+      if (marker instanceof HTMLElement) marker.style.left = `${referencePosition}%`;
+      if (output) {
+        const ratio2 = reference.median > 0 ? observation.median / reference.median : null;
+        output.textContent = `${(observation.median * 1e3).toFixed(1)} \xB5s \xB7 ` + (ratio2 === null ? "\u2014" : `${ratio2.toFixed(2)}\xD7 VIR`);
+      }
+    }
+    const stable = minimumSamples >= 30;
+    chart.dataset.state = stable ? "stable" : "warming";
+    chartNote.textContent = stable ? `${minimumSamples} matched samples in the current window; shorter bars are faster.` : `Warming: ${minimumSamples}/30 matched samples before the comparison settles.`;
   }
   function chooseFixture() {
     const fixture = selectedFixture();
@@ -1551,6 +1591,7 @@ function installHitProbe() {
         timing.textContent = `${milliseconds(observation.duration)} last \xB7 ${milliseconds(observation.median)} rolling median \xB7 ${observation.count} samples`;
       }
     }
+    renderLiveComparison(observations);
   }
   function animate(timestamp) {
     animationFrame = null;
@@ -1580,6 +1621,8 @@ function installHitProbe() {
     fixtureSelect.disabled = true;
     autoInput.disabled = true;
     status.textContent = "Probe stopped; retained scene handles and runtimes were released.";
+    chart.dataset.state = "stopped";
+    chartNote.textContent = "Probe stopped; bars retain the final rolling window.";
   }
   toggle.addEventListener("click", async function() {
     if (session !== null) {

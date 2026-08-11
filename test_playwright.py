@@ -1203,10 +1203,25 @@ def test_hit_scene_live_probe(page):
     )
     expected_backends = 3 if (ROOT / "test_output" / "fir-hit-scene" / "BUILD.json").exists() else 2
     assert page.locator("[data-probe-backend]").count() == expected_backends
+    assert page.locator("[data-probe-chart-backend]").count() == expected_backends
     page.wait_for_function(
         "() => [...document.querySelectorAll('.probe-timing')].every(node => "
         "node.textContent.includes('samples') && !node.textContent.startsWith('—'))",
         timeout=20_000,
+    )
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('[data-probe-chart-backend] output')]"
+        ".every(node => node.textContent.includes('× VIR'))",
+        timeout=20_000,
+    )
+    assert "1.00× VIR" in page.locator(
+        '[data-probe-chart-backend="vir"] output'
+    ).inner_text()
+    assert all(
+        float(width.removesuffix("%")) > 0
+        for width in page.locator(".probe-chart-track i").evaluate_all(
+            "nodes => nodes.map(node => node.style.width)"
+        )
     )
     assert len(set(page.locator(".probe-result").all_inner_texts())) == 1
     page.locator("[data-probe-fixture]").select_option("paths-large")
