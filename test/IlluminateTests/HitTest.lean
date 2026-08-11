@@ -6,6 +6,7 @@ Author: David Thrane Christiansen
 module
 import IlluminateTests.Helpers
 import Illuminate.Diagram.HitScene
+import Illuminate.Diagram.HitScene.Spatial
 public section
 
 
@@ -299,6 +300,91 @@ def testPreparedHitScene_matchesDiagram : IO Unit := do
   assertTrue (scene.label? 2 == some "front") "prepared hit scene should retain labels"
   assertTrue (scene.query 6 0 == .tag 2 "front") "prepared query should return its tag label"
 
+private def hitTreeComposeDepth : HitTree → Nat
+  | .empty | .primitive _ => 0
+  | .tag _ child | .transform _ child | .clip _ child => hitTreeComposeDepth child
+  | .compose back front => 1 + Max.max (hitTreeComposeDepth back) (hitTreeComposeDepth front)
+
+private def spatialHitTreeComposeDepth : SpatialHitTree → Nat
+  | .empty | .primitive _ => 0
+  | .tag _ child | .transform _ child | .clip _ child | .guard _ child =>
+    spatialHitTreeComposeDepth child
+  | .compose back front =>
+    1 + Max.max (spatialHitTreeComposeDepth back) (spatialHitTreeComposeDepth front)
+
+def testSpatialHitScene_matchesPrepared : IO Unit := do
+  let check := fun (name : String) (diagram : Diagram SVG)
+      (labels : Array (Nat × String)) (points : List (String × Point)) => do
+    let prepared := diagram.prepareHitScene labels
+    let spatial := diagram.prepareSpatialHitScene labels
+    let converted := SpatialHitScene.ofHitScene prepared
+    for (pointName, point) in points do
+      let expected := prepared.hitTest point
+      let actual := spatial.hitTest point
+      let convertedActual := converted.hitTest point
+      assertTrue (actual == expected)
+        s!"spatial hit scene mismatch in {name}/{pointName} at ({point.x}, {point.y})"
+      assertTrue (convertedActual == expected)
+        s!"converted spatial scene mismatch in {name}/{pointName} at ({point.x}, {point.y})"
+  check "bounds" boundsHitBenchmarkDiagram
+    #[(10, "text"), (11, "image")] boundsHitBenchmarkPoints
+  check "mixed" preparedHitBenchmarkDiagram preparedHitBenchmarkLabels preparedHitBenchmarkPoints
+  check "paths" pathHitBenchmarkDiagram #[] pathHitBenchmarkPoints
+  let transformed : Diagram SVG :=
+    .transform
+      (Matrix.translate 4 (-3) * Matrix.rotate 0.37 * Matrix.shear 0.2 (-0.15))
+      (.tag 77 (Diagram.rect 12 8))
+  let transformedPoints := (List.range 25).flatMap fun x =>
+    (List.range 25).map fun y =>
+      (s!"affine-{x}-{y}", Point.mk ((x.toFloat - 12) * 1.5) ((y.toFloat - 12) * 1.5))
+  check "affine" transformed #[(77, "affine")] transformedPoints
+  let spatial := transformed.prepareSpatialHitScene #[(77, "affine")]
+  assertTrue (spatial.query 4 (-3) == .tag 77 "affine")
+    "spatial query should retain tag labels"
+  let transformedBounds : Diagram SVG :=
+    .transform
+      (Matrix.translate 4 (-3) * Matrix.scale 1.3 0.7)
+      (.tag 78 (.prim (.image { path := "edge.svg", width := 10, height := 8 })))
+  let neighbors := fun (value : Float) =>
+    let bits := value.toBits
+    [ Float.ofBits (bits - 2), Float.ofBits (bits - 1), value,
+      Float.ofBits (bits + 1), Float.ofBits (bits + 2) ]
+  let horizontalEdges := (neighbors (-2.5) ++ neighbors 10.5).map fun x =>
+    (s!"horizontal-edge-{x.toBits}", Point.mk x (-3))
+  let verticalEdges := (neighbors (-5.8) ++ neighbors (-0.2)).map fun y =>
+    (s!"vertical-edge-{y.toBits}", Point.mk 4 y)
+  check "transformed-bounds" transformedBounds #[(78, "edge")]
+    (horizontalEdges ++ verticalEdges)
+
+def testSpatialHitScene_balancesCompositions : IO Unit := do
+  let ordinaryDepth := pathHitBenchmarkDiagram.prepareHitTree |> hitTreeComposeDepth
+  let spatialDepth := pathHitBenchmarkDiagram.prepareSpatialHitTree |> spatialHitTreeComposeDepth
+  let convertedDepth := pathHitBenchmarkDiagram.prepareHitScene
+    |> SpatialHitScene.ofHitScene
+    |>.tree
+    |> spatialHitTreeComposeDepth
+  assertTrue (ordinaryDepth == 36)
+    s!"path fixture should retain its 36-level reference composition, got {ordinaryDepth}"
+  assertTrue (spatialDepth <= 6)
+    s!"spatial preparation should balance the path fixture, got depth {spatialDepth}"
+  assertTrue (convertedDepth <= 6)
+    s!"scene conversion should balance the path fixture, got depth {convertedDepth}"
+
+def testSpatialHitScene_preservesFillRayRegion : IO Unit := do
+  let filled : Diagram SVG := Diagram.rect 10 6
+  match filled.prepareSpatialHitTree with
+  | .guard region _ =>
+    assertTrue (!region.hasLeft) "filled paths must preserve an unbounded left ray region"
+    assertTrue region.hasRight "filled paths should retain their finite right bound"
+    assertTrue region.hasBottom "filled paths should retain their finite bottom bound"
+    assertTrue region.hasTop "filled paths should retain their finite top bound"
+  | _ => throw <| IO.userError "expected a guarded filled path"
+  let stroked : Diagram SVG := Diagram.fromStroke (PathData.rect 10 6) { width := 2 }
+  match stroked.prepareSpatialHitTree with
+  | .guard region _ =>
+    assertTrue region.hasLeft "stroke-only paths should retain their finite left bound"
+  | _ => throw <| IO.userError "expected a guarded stroked path"
+
 def testPreparedHitScene_pathBounds : IO Unit := do
   let diagram : Diagram SVG := Diagram.rect 10 6 (stroke := { width := 2 })
   match diagram.prepareHitScene |>.tree with
@@ -335,6 +421,9 @@ def hitTestTests : List (String × IO Unit) :=
   , ("hitTest: gradient fill interior", testHitTest_gradientFill_interior)
   , ("hitTest: gradient fill outside", testHitTest_gradientFill_outside)
   , ("hitTest: prepared scene agrees", testPreparedHitScene_matchesDiagram)
+  , ("hitTest: spatial scene agrees", testSpatialHitScene_matchesPrepared)
+  , ("hitTest: spatial scene balances compositions", testSpatialHitScene_balancesCompositions)
+  , ("hitTest: spatial scene preserves fill-ray bounds", testSpatialHitScene_preservesFillRayRegion)
   , ("hitTest: prepared path stores stroke-expanded bounds", testPreparedHitScene_pathBounds)
   , ("hitTest: write prepared benchmark fixture", testPreparedHitScene_writeBenchmarkFixture)
   ]

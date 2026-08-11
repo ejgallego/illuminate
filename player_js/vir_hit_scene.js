@@ -22,9 +22,17 @@
  * }} VirHitSceneController
  */
 
-const mountEntry = "Illuminate.HitScene.Vir.mount";
-const queryEntry = "Illuminate.HitScene.Vir.query";
-const disposeEntry = "Illuminate.HitScene.Vir.dispose";
+const hitSceneEntries = Object.freeze({
+    mount: "Illuminate.HitScene.Vir.mount",
+    query: "Illuminate.HitScene.Vir.query",
+    dispose: "Illuminate.HitScene.Vir.dispose",
+});
+
+const spatialHitSceneEntries = Object.freeze({
+    mount: "Illuminate.HitScene.SpatialVir.mount",
+    query: "Illuminate.HitScene.SpatialVir.query",
+    dispose: "Illuminate.HitScene.SpatialVir.dispose",
+});
 
 function virHitSceneNow() {
     return globalThis.performance?.now?.() ?? Date.now();
@@ -232,18 +240,19 @@ export function normalizeVirHitSceneResult(source) {
  *
  * @param {VirHitSceneRuntime} runtime
  * @param {string | unknown} encodedScene
- * @param {VirHitSceneObserver | null} [observer]
- * @param {(() => boolean) | null} [observeQuery]
+ * @param {VirHitSceneObserver | null} observer
+ * @param {(() => boolean) | null} observeQuery
+ * @param {{ mount: string, query: string, dispose: string }} entries
  * @returns {{ query: (x: number, y: number) => VirHitSceneResult, dispose: () => void }}
  */
-export function createVirHitSceneHost(runtime, encodedScene, observer = null, observeQuery = null) {
+function createVirHitSceneHostWithEntries(runtime, encodedScene, observer, observeQuery, entries) {
     const started = virHitSceneNow();
     const projected = projectHitSceneForVir(encodedScene);
     const projectedAt = virHitSceneNow();
     const mounted =
         observer === null
-            ? { value: runtime.call(mountEntry, projected), timings: null }
-            : runtime.callTimed(mountEntry, projected);
+            ? { value: runtime.call(entries.mount, projected), timings: null }
+            : runtime.callTimed(entries.mount, projected);
     const completed = virHitSceneNow();
     const handle = mounted.value;
     let disposed = false;
@@ -272,8 +281,8 @@ export function createVirHitSceneHost(runtime, encodedScene, observer = null, ob
             const measuring = observer !== null && (observeQuery?.() ?? true);
             const queryStarted = measuring ? virHitSceneNow() : 0;
             const observed = measuring
-                ? runtime.callTimed(queryEntry, handle, x, y)
-                : { value: runtime.call(queryEntry, handle, x, y), timings: null };
+                ? runtime.callTimed(entries.query, handle, x, y)
+                : { value: runtime.call(entries.query, handle, x, y), timings: null };
             const result = normalizeVirHitSceneResult(observed.value);
             if (measuring) {
                 const queryCompleted = virHitSceneNow();
@@ -291,9 +300,54 @@ export function createVirHitSceneHost(runtime, encodedScene, observer = null, ob
         dispose() {
             if (disposed) return;
             disposed = true;
-            runtime.call(disposeEntry, handle);
+            runtime.call(entries.dispose, handle);
         },
     };
+}
+
+/**
+ * Retains one typed hit scene in VIR so repeated queries do not transfer the scene again.
+ *
+ * @param {VirHitSceneRuntime} runtime
+ * @param {string | unknown} encodedScene
+ * @param {VirHitSceneObserver | null} [observer]
+ * @param {(() => boolean) | null} [observeQuery]
+ * @returns {{ query: (x: number, y: number) => VirHitSceneResult, dispose: () => void }}
+ */
+export function createVirHitSceneHost(runtime, encodedScene, observer = null, observeQuery = null) {
+    return createVirHitSceneHostWithEntries(
+        runtime,
+        encodedScene,
+        observer,
+        observeQuery,
+        hitSceneEntries,
+    );
+}
+
+/**
+ * Retains the same typed scene behind the experimental balanced spatial VIR entry.
+ *
+ * Scene projection and the query/result boundary are identical to the reference VIR host.
+ *
+ * @param {VirHitSceneRuntime} runtime
+ * @param {string | unknown} encodedScene
+ * @param {VirHitSceneObserver | null} [observer]
+ * @param {(() => boolean) | null} [observeQuery]
+ * @returns {{ query: (x: number, y: number) => VirHitSceneResult, dispose: () => void }}
+ */
+export function createVirSpatialHitSceneHost(
+    runtime,
+    encodedScene,
+    observer = null,
+    observeQuery = null,
+) {
+    return createVirHitSceneHostWithEntries(
+        runtime,
+        encodedScene,
+        observer,
+        observeQuery,
+        spatialHitSceneEntries,
+    );
 }
 
 /**

@@ -356,9 +356,16 @@ function parseHitScenePerformanceHistory(source) {
 }
 
 // player_js/vir_hit_scene.js
-var mountEntry = "Illuminate.HitScene.Vir.mount";
-var queryEntry = "Illuminate.HitScene.Vir.query";
-var disposeEntry = "Illuminate.HitScene.Vir.dispose";
+var hitSceneEntries = Object.freeze({
+  mount: "Illuminate.HitScene.Vir.mount",
+  query: "Illuminate.HitScene.Vir.query",
+  dispose: "Illuminate.HitScene.Vir.dispose"
+});
+var spatialHitSceneEntries = Object.freeze({
+  mount: "Illuminate.HitScene.SpatialVir.mount",
+  query: "Illuminate.HitScene.SpatialVir.query",
+  dispose: "Illuminate.HitScene.SpatialVir.dispose"
+});
 function virHitSceneNow() {
   return globalThis.performance?.now?.() ?? Date.now();
 }
@@ -538,11 +545,11 @@ function normalizeVirHitSceneResult(source) {
   }
   return { kind, value, label: fields.label };
 }
-function createVirHitSceneHost(runtime, encodedScene, observer = null, observeQuery = null) {
+function createVirHitSceneHostWithEntries(runtime, encodedScene, observer, observeQuery, entries) {
   const started = virHitSceneNow();
   const projected = projectHitSceneForVir(encodedScene);
   const projectedAt = virHitSceneNow();
-  const mounted = observer === null ? { value: runtime.call(mountEntry, projected), timings: null } : runtime.callTimed(mountEntry, projected);
+  const mounted = observer === null ? { value: runtime.call(entries.mount, projected), timings: null } : runtime.callTimed(entries.mount, projected);
   const completed = virHitSceneNow();
   const handle = mounted.value;
   let disposed = false;
@@ -568,7 +575,7 @@ function createVirHitSceneHost(runtime, encodedScene, observer = null, observeQu
       }
       const measuring = observer !== null && (observeQuery?.() ?? true);
       const queryStarted = measuring ? virHitSceneNow() : 0;
-      const observed = measuring ? runtime.callTimed(queryEntry, handle, x, y) : { value: runtime.call(queryEntry, handle, x, y), timings: null };
+      const observed = measuring ? runtime.callTimed(entries.query, handle, x, y) : { value: runtime.call(entries.query, handle, x, y), timings: null };
       const result = normalizeVirHitSceneResult(observed.value);
       if (measuring) {
         const queryCompleted = virHitSceneNow();
@@ -586,9 +593,18 @@ function createVirHitSceneHost(runtime, encodedScene, observer = null, observeQu
     dispose() {
       if (disposed) return;
       disposed = true;
-      runtime.call(disposeEntry, handle);
+      runtime.call(entries.dispose, handle);
     }
   };
+}
+function createVirHitSceneHost(runtime, encodedScene, observer = null, observeQuery = null) {
+  return createVirHitSceneHostWithEntries(
+    runtime,
+    encodedScene,
+    observer,
+    observeQuery,
+    hitSceneEntries
+  );
 }
 
 // player_js/hit_scene_performance.js

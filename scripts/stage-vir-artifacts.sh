@@ -11,6 +11,7 @@ fi
 
 stage_animation=false
 stage_hit_scene=false
+stage_spatial_hit_scene=false
 for artifact in "$@"; do
   case "$artifact" in
     animation)
@@ -19,8 +20,11 @@ for artifact in "$@"; do
     hit-scene)
       stage_hit_scene=true
       ;;
+    spatial-hit-scene)
+      stage_spatial_hit_scene=true
+      ;;
     *)
-      echo "unknown VIR artifact '$artifact'; expected animation or hit-scene" >&2
+      echo "unknown VIR artifact '$artifact'; expected animation, hit-scene, or spatial-hit-scene" >&2
       exit 1
       ;;
   esac
@@ -77,6 +81,9 @@ fi
 if [ "$stage_hit_scene" = true ]; then
   lake build +Illuminate.Diagram.HitScene.Vir:vir
 fi
+if [ "$stage_spatial_hit_scene" = true ]; then
+  lake build +Illuminate.Diagram.HitScene.SpatialVir:vir
+fi
 
 VIR_SDK_ARCHIVE="$sdk_archive" lake build :virSdk
 
@@ -90,14 +97,16 @@ cp -R "$sdk_source/." "$stage_root/sdk/"
 
 stage_module_set() {
   local module_path="$1"
+  local module_name="${2:-Vir}"
+  local destination_path="${3:-$module_path}"
   local package_set_source="$repo_root/.lake/build/vir/module-sets/$module_path"
-  local package_set_dir="$stage_root/module-sets/$module_path"
+  local package_set_dir="$stage_root/module-sets/$destination_path"
 
   rm -rf "$package_set_dir"
   mkdir -p "$package_set_dir"
-  cp "$package_set_source/Vir.irpkg-set.json" "$package_set_dir/Vir.irpkg-set.json"
-  cp "$package_set_source/Vir.irpkg" "$package_set_dir/Vir.irpkg"
-  cp -R "$package_set_source/Vir.parts" "$package_set_dir/Vir.parts"
+  cp "$package_set_source/$module_name.irpkg-set.json" "$package_set_dir/$module_name.irpkg-set.json"
+  cp "$package_set_source/$module_name.irpkg" "$package_set_dir/$module_name.irpkg"
+  cp -R "$package_set_source/$module_name.parts" "$package_set_dir/$module_name.parts"
 }
 
 if [ "$stage_animation" = true ]; then
@@ -106,6 +115,12 @@ fi
 if [ "$stage_hit_scene" = true ]; then
   stage_module_set "Illuminate/Diagram/HitScene"
 fi
+if [ "$stage_spatial_hit_scene" = true ]; then
+  stage_module_set \
+    "Illuminate/Diagram/HitScene" \
+    "SpatialVir" \
+    "Illuminate/Diagram/HitScene/SpatialVir"
+fi
 
 staged=()
 if [ "$stage_animation" = true ]; then
@@ -113,5 +128,8 @@ if [ "$stage_animation" = true ]; then
 fi
 if [ "$stage_hit_scene" = true ]; then
   staged+=("hit-scene")
+fi
+if [ "$stage_spatial_hit_scene" = true ]; then
+  staged+=("spatial-hit-scene")
 fi
 echo "staged Illuminate VIR ${staged[*]} assets under test_output/vir"

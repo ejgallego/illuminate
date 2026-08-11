@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
     createVirHitSceneController,
     createVirHitSceneHost,
+    createVirSpatialHitSceneHost,
     normalizeVirHitSceneResult,
     projectHitSceneForVir,
 } from "../player_js/vir_hit_scene.js";
@@ -163,6 +164,14 @@ host.dispose();
 host.dispose();
 assert.equal(calls.filter(({ name }) => name.endsWith(".dispose")).length, 1);
 assert.throws(() => host.query(0, 0), /disposed/);
+
+const spatialHost = createVirSpatialHitSceneHost(runtime, encodedScene);
+assert.equal(calls.at(-1).name, "Illuminate.HitScene.SpatialVir.mount");
+assert.deepEqual(spatialHost.query(0, -0), { kind: "tag", value: 7, label: "shape" });
+assert.equal(calls.at(-1).name, "Illuminate.HitScene.SpatialVir.query");
+assert.equal(Object.is(calls.at(-1).args[2], -0), true);
+spatialHost.dispose();
+assert.equal(calls.at(-1).name, "Illuminate.HitScene.SpatialVir.dispose");
 
 const controller = createVirHitSceneController(runtime);
 assert.throws(() => controller.query(0, 0), /has no scene/);

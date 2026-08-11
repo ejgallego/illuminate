@@ -193,6 +193,68 @@ The accepted package keeps browser API
 to `lean-4.32-Illuminate.HitScene/v2`. The regenerated package now
 matches all 1,009 tier-suite queries.
 
+## Spatial subtree experiment
+
+The next candidate is intentionally opt-in. `SpatialHitScene` converts
+the accepted `HitScene` once at mount time, attaches conservative
+bounds to subtrees, and balances flattened composition runs. The
+production `HitTree`, its codec, and the accepted FIR v2 input layout
+remain unchanged.
+
+This gives a particularly clean VIR comparison. Both variants receive
+the same typed scene through the same JavaScript projector, retain it
+through the same resource API, accept the same two `Float` query
+arguments, and use the same result decoder. Only the retained Lean
+tree and query algorithm differ. The experiment matched all 1,009
+oracle queries, plus a separate affine grid. The 36-level path fixture
+becomes a tree of depth at most six.
+
+Filled paths retain an unbounded left side. This is required by the
+existing eastward parity-ray semantics: points left of the geometry
+can still produce observable hits in numerical edge cases. Right, top,
+and bottom bounds remain finite; stroke-only paths use all four sides.
+Affine interval propagation keeps partially unbounded regions
+conservative.
+
+The full run used five warm-up rounds, 20 measured production rounds,
+balanced backend order, and five separately instrumented diagnostic
+rounds:
+
+| Workload       | Reference VIR | Spatial VIR | Median speedup | Mean speedup | p95 speedup | Execute speedup |
+| -------------- | ------------: | ----------: | -------------: | -----------: | ----------: | --------------: |
+| `bounds-small` |      0.026 ms |    0.026 ms |          1.00× |        1.02× |       1.02× |           1.01× |
+| `mixed-medium` |      0.335 ms |    0.082 ms |          4.10× |        1.36× |       1.01× |           7.19× |
+| `paths-large`  |      0.811 ms |    0.530 ms |          1.53× |        1.19× |       1.02× |           1.33× |
+
+The mixed and path medians improve, and the diagnostic split
+attributes the gain to Lean execution. Bounds-only geometry is
+effectively unchanged. The mixed mean improves by 26%, but expensive
+path hits still dominate the tail and are not skipped by broad subtree
+guards. An independent full repeat put the median speedups at 1.07×,
+2.63×, and 1.74× respectively, so absolute medians are sensitive to
+ambient load while the direction is stable. This candidate is useful
+evidence, but not yet a production switch.
+
+The candidate VIR package is 22,600 bytes versus 22,074 bytes for the
+reference package, an increase of 526 bytes (2.4%). It loads 278 Lean
+IR declarations and 57 native externs versus 246 and 53. The VIR
+runtime Wasm is identical. Creation ratios are deliberately not used
+as evidence because the current harness records one fixed-order mount
+sample per workload.
+
+Reproduce the experiment with:
+
+```sh
+npm run stage:vir-hit-scene
+npm run stage:vir-spatial-hit-scene
+npm run measure:vir-spatial-hit-scene
+```
+
+The gitignored detailed result is
+`test_output/vir-spatial-hit-scene-performance.json`. No FIR
+regeneration is requested until query-class analysis and tail behavior
+justify accepting the representation.
+
 ## Conclusions and next actions
 
 1. Keep the current retained typed-object boundary. It has removed the
@@ -200,12 +262,13 @@ matches all 1,009 tier-suite queries.
 2. Treat FIR as the compiled semantic control. Its 7.2× to 20.6× tier
    speedup attributes most remaining geometry cost to VIR interpreter
    execution rather than its retained boundary.
-3. Keep the accepted conservative prepared-path bounds. FIR v2 now
-   validates the representation and semantics; next consider bounds on
-   composed subtrees or a small spatial index so obvious misses do not
-   walk every path.
-4. Re-run the result-class breakdown after each algorithmic change;
-   full-scene misses are the most sensitive regression signal.
+3. Keep the accepted conservative prepared-path bounds. The opt-in
+   spatial experiment confirms that subtree rejection can reduce
+   median execution, but its mixed p95 needs query-class study before
+   adoption or FIR rebuild.
+4. Re-run the query-class and result-class breakdown for the spatial
+   candidate; full-scene misses are the most sensitive regression
+   signal.
 5. Preserve the 301-query semantic differential and 10,000-query 4 MiB
    memory plateau as acceptance gates.
 
