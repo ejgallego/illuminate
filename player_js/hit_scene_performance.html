@@ -96,6 +96,139 @@
                 height: 7px;
                 accent-color: #5bd6aa;
             }
+            .probe-controls {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 10px;
+                align-items: center;
+                margin-bottom: 16px;
+            }
+            .probe-controls button,
+            .probe-controls select {
+                padding: 8px 11px;
+                border: 1px solid #385186;
+                border-radius: 8px;
+                color: #e9efff;
+                background: #172543;
+                font: inherit;
+            }
+            .probe-controls button {
+                color: #081126;
+                background: #89aaff;
+                font-weight: 800;
+                cursor: pointer;
+            }
+            .probe-controls button[data-state="running"] {
+                color: #fbeef4;
+                border-color: #8c4467;
+                background: #713753;
+            }
+            .probe-controls label {
+                display: inline-flex;
+                gap: 7px;
+                align-items: center;
+                color: #9eacca;
+                font-size: 11px;
+            }
+            .probe-controls input {
+                accent-color: #ad7cff;
+            }
+            .probe-status {
+                margin-left: auto;
+                color: #8293b6;
+                font-size: 11px;
+            }
+            .probe-grid {
+                display: grid;
+                grid-template-columns: minmax(320px, 1.35fr) minmax(240px, 0.65fr);
+                gap: 14px;
+            }
+            .probe-stage {
+                position: relative;
+                min-height: 390px;
+                overflow: hidden;
+                border: 1px solid #2c4371;
+                border-radius: 12px;
+                background:
+                    linear-gradient(rgb(124 151 211 / 0.05) 1px, transparent 1px),
+                    linear-gradient(90deg, rgb(124 151 211 / 0.05) 1px, transparent 1px), #081122;
+                background-size: 24px 24px;
+            }
+            .probe-stage svg {
+                display: block;
+                width: 100%;
+                height: 390px;
+                cursor: crosshair;
+            }
+            .probe-stage output {
+                position: absolute;
+                right: 10px;
+                bottom: 9px;
+                padding: 4px 7px;
+                border-radius: 6px;
+                color: #d5def5;
+                background: rgb(5 12 26 / 0.82);
+                font:
+                    10px ui-monospace,
+                    monospace;
+            }
+            .probe-axis {
+                stroke: #52698f;
+                stroke-width: 0.35;
+                stroke-dasharray: 1.5 1.5;
+                vector-effect: non-scaling-stroke;
+                opacity: 0.55;
+            }
+            [data-probe-cursor] circle {
+                fill: rgb(7 15 31 / 0.82);
+                stroke: #f8d270;
+                stroke-width: 0.55;
+                vector-effect: non-scaling-stroke;
+            }
+            [data-probe-cursor] line {
+                stroke: #f8d270;
+                stroke-width: 0.45;
+                vector-effect: non-scaling-stroke;
+            }
+            [data-probe-cursor][data-result="nothing"] circle {
+                stroke: #7787a8;
+            }
+            .probe-backends {
+                display: grid;
+                gap: 10px;
+                align-content: start;
+            }
+            .probe-backend {
+                display: grid;
+                gap: 7px;
+                padding: 14px;
+                border: 1px solid #2b3d65;
+                border-radius: 10px;
+                background: #0d172b;
+            }
+            .probe-backend strong {
+                color: #90afff;
+                font-size: 12px;
+            }
+            .probe-backend.spatial strong {
+                color: #dba4e6;
+            }
+            .probe-backend.fir strong {
+                color: #6ee3b8;
+            }
+            .probe-result {
+                color: #f3f6ff;
+                font:
+                    750 15px ui-monospace,
+                    monospace;
+            }
+            .probe-timing {
+                color: #7f91b4;
+                font:
+                    9px ui-monospace,
+                    monospace;
+                line-height: 1.5;
+            }
             .backend-cards {
                 display: grid;
                 grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -504,8 +637,13 @@
                     grid-template-columns: 1fr;
                 }
                 .history-run,
-                .history-ratios {
+                .history-ratios,
+                .probe-grid {
                     grid-template-columns: 1fr;
+                }
+                .probe-status {
+                    width: 100%;
+                    margin-left: 0;
                 }
             }
         </style>
@@ -527,14 +665,48 @@
                 <strong data-headline-ratio>—</strong>
             </div>
             <div class="live-runner">
-                <button type="button" data-run-live>Run live three-workload suite</button>
+                <button type="button" data-run-live>Run one browser measurement</button>
                 <progress data-live-progress max="3" value="0" hidden></progress>
                 <span data-live-status>
-                    The stored report loads automatically; this reruns bounds, mixed, and path-heavy
-                    scenes in this tab. A live cached-LSP/VIR comparison is available inside each
-                    <code>#diagram</code> InfoView.
+                    The stored report loads automatically. This button performs one correctness and
+                    timing pass; the interactive probe below keeps scenes resident for continuous
+                    queries.
                 </span>
             </div>
+            <section class="details">
+                <h2>Live retained HitScene probe</h2>
+                <p>
+                    Pointer and automatic coordinates are sent to the same retained scene through
+                    reference VIR, spatial VIR, and FIR. Geometry is a host-side visualization of
+                    the Lean-generated fixture; every displayed hit result comes from the backend.
+                </p>
+                <div class="probe-controls">
+                    <button type="button" data-probe-toggle data-state="stopped">
+                        Start live probe
+                    </button>
+                    <select data-probe-fixture disabled aria-label="HitScene fixture"></select>
+                    <label>
+                        <input type="checkbox" data-probe-auto checked disabled /> Automatic query
+                    </label>
+                    <span class="probe-status" data-probe-status>
+                        Start the probe to load and retain the staged browser runtimes.
+                    </span>
+                </div>
+                <div class="probe-grid">
+                    <div class="probe-stage">
+                        <svg data-probe-svg aria-label="Interactive HitScene fixture"></svg>
+                        <output data-probe-coordinates>—</output>
+                    </div>
+                    <div class="probe-backends" data-probe-backends>
+                        <article class="probe-backend">
+                            <strong>Backends load on demand</strong>
+                            <small class="probe-timing">
+                                No scene crosses the boundary again after mount.
+                            </small>
+                        </article>
+                    </div>
+                </div>
+            </section>
             <section class="backend-cards" data-backend-cards></section>
             <section class="details">
                 <h2>Detailed runtime phases</h2>

@@ -113,6 +113,22 @@ def stage_player_assets():
         print("Player staging stderr:", result.stderr, file=sys.stderr)
         raise RuntimeError(f"Player staging failed:\n{result.stdout}")
     output = result.stdout
+    for command in (
+        ["npm", "run", "stage:vir-hit-scene"],
+        ["npm", "run", "stage:vir-spatial-hit-scene"],
+        ["npm", "run", "stage:hit-scene-performance"],
+    ):
+        hit_scene_result = subprocess.run(
+            command,
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if hit_scene_result.returncode != 0:
+            print("HitScene staging stderr:", hit_scene_result.stderr, file=sys.stderr)
+            raise RuntimeError(f"HitScene staging failed:\n{hit_scene_result.stdout}")
+        output += hit_scene_result.stdout
     if os.environ.get("ILLUMINATE_FIR_LIVE_PLAYER_DIR"):
         live_result = subprocess.run(
             ["npm", "run", "stage:fir-live"],
@@ -932,8 +948,10 @@ def test_animation_comparison_dashboard(page):
     page.wait_for_function("document.body.dataset.ready === 'true'", timeout=60_000)
 
     assert page.locator(".example").count() == 16
-    assert page.locator(".stage svg").count() == 32
-    assert "16 examples · 32 owned players" in page.locator("#comparison-status").inner_text()
+    assert page.locator("#comparison-grid .stage svg").count() == 32
+    assert "16 examples · 32 analyzer players" in page.locator(
+        "#comparison-status"
+    ).inner_text()
     assert page.locator("#comparison-backend").input_value() == "vir-selection"
     assert page.evaluate("typeof window.__illuminateComparisonResetMetrics") == "function"
     assert page.locator(".sticky-peaks").count() == 1
@@ -949,6 +967,29 @@ def test_animation_comparison_dashboard(page):
     assert page.locator('#comparison-backend option[value="fir"]').evaluate(
         "option => option.disabled"
     ) is (not fir_live_staged)
+    assert page.locator("#fixture-select option").count() == 16
+    assert page.locator("[data-fixture-backend]").count() == 4
+    expected_fixture_players = 3 if fir_live_staged else 2
+    assert page.locator('[data-fixture-backend][data-state="ready"]').count() == (
+        expected_fixture_players
+    )
+    assert page.locator('[data-fixture-backend="llvm"]').get_attribute(
+        "data-state"
+    ) == "unavailable"
+    assert page.locator("[data-fixture-stage] svg").count() == expected_fixture_players
+    page.locator("#fixture-select").select_option("7")
+    page.wait_for_function(
+        "index => document.querySelector('#fixture-select').value === String(index)",
+        arg=7,
+    )
+    page.locator("#fixture-pause").click()
+    page.locator("#fixture-scrub").evaluate(
+        "input => { input.value = '4'; input.dispatchEvent(new Event('input')); }"
+    )
+    page.wait_for_function(
+        "document.querySelector('#fixture-frame').textContent.startsWith('4 / ')"
+    )
+    assert "DOM match" in page.locator("[data-fixture-parity]").inner_text()
 
     page.wait_for_function(
         """() => [...document.querySelectorAll('[data-summary-stat=fps]')]
@@ -1146,6 +1187,37 @@ def test_animation_comparison_dashboard(page):
     assert errors == []
 
 
+def test_hit_scene_live_probe(page):
+    """The standalone HitScene page retains and continuously queries every staged backend."""
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.goto(_test_output_url("hit-scene-performance.html"))
+    page.wait_for_function(
+        "['true', 'error'].includes(document.body.dataset.ready)", timeout=60_000
+    )
+    assert page.locator("[data-run-live]").inner_text() == "Run one browser measurement"
+    page.locator("[data-probe-toggle]").click()
+    page.wait_for_function(
+        "document.querySelector('[data-probe-toggle]').dataset.state === 'running'",
+        timeout=120_000,
+    )
+    expected_backends = 3 if (ROOT / "test_output" / "fir-hit-scene" / "BUILD.json").exists() else 2
+    assert page.locator("[data-probe-backend]").count() == expected_backends
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('.probe-timing')].every(node => "
+        "node.textContent.includes('samples') && !node.textContent.startsWith('—'))",
+        timeout=20_000,
+    )
+    assert len(set(page.locator(".probe-result").all_inner_texts())) == 1
+    page.locator("[data-probe-fixture]").select_option("paths-large")
+    page.wait_for_timeout(250)
+    assert page.locator("[data-probe-svg] path").count() > 0
+    assert len(set(page.locator(".probe-result").all_inner_texts())) == 1
+    page.locator("[data-probe-toggle]").click()
+    assert "released" in page.locator("[data-probe-status]").inner_text()
+    assert errors == []
+
+
 # ---------------------------------------------------------------------------
 # Direct runner (not pytest)
 # ---------------------------------------------------------------------------
@@ -1191,6 +1263,7 @@ def main():
         test_vir_player_loop_does_not_stop,
         test_standalone_player_dual_animation_independence,
         test_animation_comparison_dashboard,
+        test_hit_scene_live_probe,
     ]
 
     visual_tests = [

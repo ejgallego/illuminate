@@ -88,7 +88,10 @@
         <main class="primary">
             <a href="anim-comparison.html">
                 <strong>Animation runtime comparison</strong>
-                <span>All 16 examples with JavaScript, VIR selection/full, and FIR.</span>
+                <span>
+                    Select one of 16 fixtures and run JavaScript, VIR, FIR, and LLVM slots together;
+                    the detailed paired analyzer remains below.
+                </span>
             </a>
             <a href="hit-scene-performance.html">
                 <strong>HitScene performance</strong>
@@ -98,17 +101,22 @@
 
         <h2>Animation fixtures</h2>
         <section class="fixtures">
-            <a href="anim-seek-test.html"><strong>JavaScript seek</strong></a>
-            <a href="anim-vir-seek-test.html"><strong>VIR seek</strong></a>
-            <a href="anim-loop-test.html"><strong>JavaScript loop</strong></a>
-            <a href="anim-vir-loop-test.html"><strong>VIR loop</strong></a>
-            <a href="anim-segment-test.html"><strong>JavaScript segments</strong></a>
-            <a href="anim-vir-segment-test.html"><strong>VIR segments</strong></a>
-            <a href="anim-dual-test.html"><strong>Two JavaScript players</strong></a>
-            <a href="anim-vir-dual-test.html"><strong>Two VIR players</strong></a>
-            <a href="anim-clippath-test.html"><strong>Animated clip path</strong></a>
-            <a href="anim-clipshape-test.html"><strong>Animated clip shape</strong></a>
-            <a href="anim-gradient-color-test.html"><strong>Animated gradient</strong></a>
+            <a href="anim-comparison.html?fixture=4#fixture-matrix">
+                <strong>Pause and seek</strong>
+                <span>Four backend slots, one pause-driven slide show.</span>
+            </a>
+            <a href="anim-comparison.html?fixture=7#fixture-matrix">
+                <strong>Loop exit</strong>
+                <span>Compare loop completion and the transition into the final step.</span>
+            </a>
+            <a href="anim-comparison.html?fixture=10#fixture-matrix">
+                <strong>Segment replacement</strong>
+                <span>Exercise structural SVG changes in a nested morph.</span>
+            </a>
+            <a href="anim-comparison.html?fixture=15#fixture-matrix">
+                <strong>Text patching</strong>
+                <span>Compare multiline text-content updates across all ready backends.</span>
+            </a>
         </section>
     </body>
 </html>

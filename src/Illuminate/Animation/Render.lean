@@ -282,6 +282,27 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .auto select \{ padding: 5px 7px; border: 1px solid #344362; border-radius: 6px; background: #172039; color: #c6d0e7; }
 .profiling-toggle span \{ color: #8292b3; font-size: 11px; }
 #comparison-status \{ color: #8ea2c7; font-size: 12px; }
+.fixture-focus \{ width: min(100% - 36px, 1320px); margin: 22px auto; overflow: hidden; background: #11192d; border: 1px solid #2a3a61; border-radius: 16px; box-shadow: 0 16px 52px rgb(0 0 0 / .2); }
+.fixture-focus > header \{ display: flex; flex-wrap: wrap; gap: 14px; align-items: center; padding: 16px 20px; border-bottom: 1px solid #263453; }
+.fixture-focus > header div \{ margin-right: auto; }
+.fixture-focus > header h2 \{ margin: 0; font-size: 17px; }
+.fixture-focus > header p \{ margin: 4px 0 0; color: #8292b3; font-size: 10px; }
+.fixture-focus select \{ min-width: min(320px, 100%); padding: 7px 9px; border: 1px solid #3a4c75; border-radius: 7px; color: #dce5ff; background: #172039; }
+.fixture-matrix \{ display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.fixture-backend \{ min-width: 0; padding: 14px; }
+.fixture-backend + .fixture-backend \{ border-left: 1px solid #263453; }
+.fixture-backend h3 \{ display: flex; gap: 7px; align-items: center; margin: 0 0 9px; color: #c6d2ec; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; }
+.fixture-backend h3 em \{ margin-left: auto; color: #7183a7; font: 8px ui-monospace, monospace; text-transform: none; }
+.fixture-backend[data-state=\"unavailable\"] \{ opacity: .78; }
+.fixture-backend[data-state=\"unavailable\"] .stage \{ color: #91a1c0; background: #151f35; border: 1px dashed #405173; font-size: 11px; line-height: 1.55; text-align: center; }
+.fixture-backend .stage \{ min-height: 172px; padding: 10px; }
+.fixture-backend .stage svg \{ height: 150px; }
+.engine-dot.llvm \{ background: #d7c45c; box-shadow: 0 0 12px #d7c45c; }
+.fixture-focus > footer \{ display: grid; grid-template-columns: auto auto minmax(160px, 1fr) auto auto; gap: 10px; align-items: center; padding: 12px 20px; background: #0e1628; border-top: 1px solid #263453; }
+.fixture-focus > footer input[type=\"range\"] \{ width: 100%; accent-color: #6c91eb; }
+.fixture-focus > footer output \{ min-width: 76px; color: #8495b6; font: 11px ui-monospace, monospace; text-align: right; }
+.fixture-focus [data-fixture-parity] \{ color: #74d4ae; font-size: 10px; }
+.fixture-focus [data-fixture-parity].mismatch \{ color: #e8ba70; }
 .sticky-peaks \{ position: sticky; z-index: 6; top: 0; display: flex; gap: 8px; align-items: stretch; justify-content: flex-end; min-height: 42px; padding: 5px clamp(18px, 5vw, 72px); background: #0b1020; border-bottom: 1px solid #2a395f; box-shadow: 0 6px 16px rgb(0 0 0 / .14); }
 .sticky-peaks > span \{ display: grid; grid-template-columns: auto auto; gap: 0 7px; align-content: center; min-width: 108px; padding: 2px 7px; }
 .sticky-peaks > span + span \{ border-left: 1px solid #2a395f; }
@@ -380,8 +401,9 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .example footer input \{ width: 100%; accent-color: #6c91eb; }
 .example output \{ min-width: 74px; color: #8495b6; font: 11px ui-monospace, monospace; text-align: right; }
 .method \{ width: min(100% - 36px, 1320px); margin: -42px auto 60px; color: #7889aa; font-size: 11px; line-height: 1.6; }
+@media (max-width: 1080px) \{ .fixture-matrix \{ grid-template-columns: repeat(2, minmax(0, 1fr)); } .fixture-backend:nth-child(3) \{ border-top: 1px solid #263453; border-left: 0; } .fixture-backend:nth-child(4) \{ border-top: 1px solid #263453; } }
 @media (max-width: 980px) \{ .sticky-peaks \{ justify-content: flex-end; } }
-@media (max-width: 780px) \{ .pair, .summaries, .aggregate-insights \{ grid-template-columns: 1fr; } .aggregate-phase-chart \{ grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 18px; } .player + .player \{ border-top: 1px solid #263453; border-left: 0; } .example > footer \{ grid-template-columns: 1fr 1fr; } .example footer input \{ grid-column: 1 / -1; } .example output \{ display: none; } .summary \{ min-height: 74px; } .sticky-peaks \{ justify-content: stretch; } .sticky-peaks > span \{ min-width: 0; flex: 1; } .sticky-peaks small \{ display: none; } }
+@media (max-width: 780px) \{ .pair, .summaries, .aggregate-insights, .fixture-matrix \{ grid-template-columns: 1fr; } .aggregate-phase-chart \{ grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 18px; } .player + .player, .fixture-backend + .fixture-backend \{ border-top: 1px solid #263453; border-left: 0; } .fixture-focus > footer, .example > footer \{ grid-template-columns: 1fr 1fr; } .fixture-focus > footer input[type=\"range\"], .example footer input \{ grid-column: 1 / -1; } .example output \{ display: none; } .summary \{ min-height: 74px; } .sticky-peaks \{ justify-content: stretch; } .sticky-peaks > span \{ min-width: 0; flex: 1; } .sticky-peaks small \{ display: none; } }
 </style>
 </head>
 <body data-ready=\"false\">
@@ -399,6 +421,16 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
   <label class=\"auto profiling-toggle\"><input id=\"comparison-vir-timing\" type=\"checkbox\" aria-controls=\"comparison-grid aggregate-phases\" aria-expanded=\"false\"> Detailed callback phases <span>adds measurement overhead</span></label>
   <span id=\"comparison-status\" data-state=\"loading\">Loading one shared VIR runtime…</span>
 </nav>
+<section class=\"fixture-focus\" id=\"fixture-matrix\" aria-label=\"Four-backend animation fixture\">
+  <header><div><h2>One fixture · four backends</h2><p>All ready players receive the same commands. Missing compiler artifacts remain visible as unavailable slots.</p></div><select id=\"fixture-select\" aria-label=\"Animation fixture\"></select></header>
+  <div class=\"fixture-matrix\">
+    <article class=\"fixture-backend\" data-fixture-backend=\"js\" data-state=\"loading\"><h3><span class=\"engine-dot js\"></span>JavaScript <em data-fixture-state>loading</em></h3><div class=\"stage\" data-fixture-stage=\"js\"></div></article>
+    <article class=\"fixture-backend\" data-fixture-backend=\"vir\" data-state=\"loading\"><h3><span class=\"engine-dot vir\"></span>Lean · VIR <em data-fixture-state>loading</em></h3><div class=\"stage\" data-fixture-stage=\"vir\"></div></article>
+    <article class=\"fixture-backend\" data-fixture-backend=\"fir\" data-state=\"loading\"><h3><span class=\"engine-dot fir\"></span>Lean · FIR <em data-fixture-state>loading</em></h3><div class=\"stage\" data-fixture-stage=\"fir\"></div></article>
+    <article class=\"fixture-backend\" data-fixture-backend=\"llvm\" data-state=\"unavailable\"><h3><span class=\"engine-dot llvm\"></span>Lean · LLVM <em data-fixture-state>package not staged</em></h3><div class=\"stage\" data-fixture-stage=\"llvm\"><span>Awaiting an Illuminate FIR-LLVM/Emscripten artifact.</span></div></article>
+  </div>
+  <footer><button id=\"fixture-advance\" type=\"button\">Play / advance</button><button id=\"fixture-pause\" class=\"quiet\" type=\"button\">Pause</button><input id=\"fixture-scrub\" type=\"range\" min=\"0\" value=\"0\" aria-label=\"Shared focused animation frame\"><output id=\"fixture-frame\">0 / 0</output><span data-fixture-parity>waiting for players</span></footer>
+</section>
 <section class=\"sticky-peaks\" aria-label=\"Persistent callback peaks\">
   <span class=\"js\"><b>JS run peak</b><strong data-sticky-peak=\"js\">—</strong><small data-sticky-peak-detail=\"js\">waiting for callbacks</small></span>
   <span class=\"candidate\"><b><span data-sticky-candidate-name>VIR selection</span> peak</b><strong data-sticky-peak=\"candidate\">—</strong><small data-sticky-peak-detail=\"candidate\">waiting for callbacks</small></span>

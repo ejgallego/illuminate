@@ -2,7 +2,7 @@
 
 import { createFirHitSceneHost } from "./fir_hit_scene.js";
 import { parseHitScenePerformanceHistory } from "./hit_scene_performance_history.js";
-import { createVirHitSceneHost } from "./vir_hit_scene.js";
+import { createVirHitSceneHost, createVirSpatialHitSceneHost } from "./vir_hit_scene.js";
 
 /**
  * @typedef {"vir" | "fir"} HitScenePerformanceBackend
@@ -187,6 +187,39 @@ async function loadVirCandidate() {
         },
         createProfiled(/** @type {any} */ fixture, /** @type {any} */ observer) {
             return createVirHitSceneHost(runtime, fixture.encodedScene, observer);
+        },
+        dispose() {
+            runtime.dispose();
+        },
+    };
+}
+
+async function loadSpatialVirCandidate() {
+    const runtimeModuleUrl = new URL("./vir/sdk/js/vir-runtime.js", location.href).href;
+    const runtimeModule = await import(runtimeModuleUrl);
+    const wasmBytes = await fetchBytes("./vir/sdk/wasm/vir-upstream.wasm");
+    const descriptorUrl = new URL(
+        "./vir/module-sets/Illuminate/Diagram/HitScene/SpatialVir/SpatialVir.irpkg-set.json",
+        location.href,
+    );
+    const descriptor = /** @type {{ packages: Array<{ path: string }> }} */ (
+        await requireOk(
+            await fetch(descriptorUrl, { cache: "no-store" }),
+            "spatial VIR package set",
+        ).then((response) => response.json())
+    );
+    const packageSetBytes = await Promise.all(
+        descriptor.packages.map((member) => fetchBytes(new URL(member.path, descriptorUrl))),
+    );
+    const runtime = await runtimeModule.createVirRuntime({
+        wasmBytes,
+        irPackageSetBytes: packageSetBytes,
+    });
+    return {
+        name: "spatial",
+        label: "Spatial VIR",
+        create(/** @type {any} */ fixture) {
+            return createVirSpatialHitSceneHost(runtime, fixture.encodedScene);
         },
         dispose() {
             runtime.dispose();
@@ -700,6 +733,462 @@ function renderSpatialPerformance(report) {
     panel.hidden = false;
 }
 
+const svgNamespace = "http://www.w3.org/2000/svg";
+
+/** @param {string} name @param {Record<string, string | number>} attributes */
+function svgElement(name, attributes = {}) {
+    const node = document.createElementNS(svgNamespace, name);
+    for (const [key, value] of Object.entries(attributes)) {
+        node.setAttribute(key, String(value));
+    }
+    return node;
+}
+
+/** @param {any} left @param {any} right */
+function multiplyMatrix(left, right) {
+    return {
+        a: left.a * right.a + left.b * right.c,
+        b: left.a * right.b + left.b * right.d,
+        tx: left.a * right.tx + left.b * right.ty + left.tx,
+        c: left.c * right.a + left.d * right.c,
+        d: left.c * right.b + left.d * right.d,
+        ty: left.c * right.tx + left.d * right.ty + left.ty,
+    };
+}
+
+/** @param {any} matrix */
+function invertMatrix(matrix) {
+    const determinant = matrix.a * matrix.d - matrix.b * matrix.c;
+    if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) return null;
+    return {
+        a: matrix.d / determinant,
+        b: -matrix.b / determinant,
+        tx: (matrix.b * matrix.ty - matrix.d * matrix.tx) / determinant,
+        c: -matrix.c / determinant,
+        d: matrix.a / determinant,
+        ty: (matrix.c * matrix.tx - matrix.a * matrix.ty) / determinant,
+    };
+}
+
+/** @param {any} matrix */
+function svgMatrix(matrix) {
+    return `matrix(${matrix.a} ${matrix.c} ${matrix.b} ${matrix.d} ${matrix.tx} ${matrix.ty})`;
+}
+
+/** @param {any[]} commands */
+function pathData(commands) {
+    return commands
+        .map((command) => {
+            switch (command.kind) {
+                case "moveTo":
+                    return `M ${command.point.x} ${command.point.y}`;
+                case "lineTo":
+                    return `L ${command.point.x} ${command.point.y}`;
+                case "curveTo":
+                    return (
+                        `C ${command.control1.x} ${command.control1.y} ` +
+                        `${command.control2.x} ${command.control2.y} ` +
+                        `${command.endpoint.x} ${command.endpoint.y}`
+                    );
+                case "arcTo":
+                    return (
+                        `A ${command.rx} ${command.ry} ${command.rotation} ` +
+                        `${command.largeArc ? 1 : 0} ${command.sweep ? 1 : 0} ` +
+                        `${command.endpoint.x} ${command.endpoint.y}`
+                    );
+                case "closePath":
+                    return "Z";
+                default:
+                    return "";
+            }
+        })
+        .join(" ");
+}
+
+/** @param {number | null} tag */
+function hitSceneColor(tag) {
+    return tag === null ? "#91a5cb" : `hsl(${(tag * 67) % 360} 78% 68%)`;
+}
+
+/** @param {SVGElement} target @param {any} tree @param {any} transform @param {number | null} tag */
+function appendHitTree(target, tree, transform, tag = null) {
+    if (tree === null || typeof tree !== "object") return;
+    switch (tree.kind) {
+        case "empty":
+            return;
+        case "compose":
+            appendHitTree(target, tree.back, transform, tag);
+            appendHitTree(target, tree.front, transform, tag);
+            return;
+        case "tag":
+            appendHitTree(target, tree.child, transform, Number(tree.value));
+            return;
+        case "transform": {
+            const forward = invertMatrix(tree.inverse);
+            if (forward !== null) {
+                appendHitTree(target, tree.child, multiplyMatrix(transform, forward), tag);
+            }
+            return;
+        }
+        case "clip":
+            appendHitTree(target, tree.child, transform, tag);
+            return;
+        case "primitive":
+            break;
+        default:
+            return;
+    }
+    const primitive = tree.value;
+    if (primitive === null || typeof primitive !== "object") return;
+    const color = hitSceneColor(tag);
+    let shape;
+    if (primitive.kind === "bounds") {
+        shape = svgElement("rect", {
+            x: primitive.left,
+            y: primitive.bottom,
+            width: primitive.right - primitive.left,
+            height: primitive.top - primitive.bottom,
+            rx: 0.8,
+        });
+        shape.setAttribute("fill", `${color}35`);
+        shape.setAttribute("stroke", color);
+        shape.setAttribute("stroke-width", "0.8");
+    } else if (primitive.kind === "path") {
+        shape = svgElement("path", { d: pathData(primitive.data ?? []) });
+        shape.setAttribute("fill", primitive.hasFill ? `${color}42` : "none");
+        shape.setAttribute("stroke", color);
+        shape.setAttribute("stroke-width", String(Math.max(0.45, primitive.strokeWidth ?? 0)));
+    } else {
+        return;
+    }
+    shape.setAttribute("transform", svgMatrix(transform));
+    shape.setAttribute("vector-effect", "non-scaling-stroke");
+    if (tag !== null) shape.setAttribute("data-hit-tag", String(tag));
+    target.appendChild(shape);
+}
+
+/** @param {any} fixture @param {SVGSVGElement} svg */
+function renderHitProbeScene(fixture, svg) {
+    const xValues = fixture.queries.map((/** @type {any} */ query) => query.x);
+    const yValues = fixture.queries.map((/** @type {any} */ query) => query.y);
+    const left = Math.min(...xValues);
+    const right = Math.max(...xValues);
+    const bottom = Math.min(...yValues);
+    const top = Math.max(...yValues);
+    const padding = Math.max(3, Math.max(right - left, top - bottom) * 0.06);
+    svg.setAttribute(
+        "viewBox",
+        `${left - padding} ${-(top + padding)} ${right - left + 2 * padding} ${top - bottom + 2 * padding}`,
+    );
+    const world = /** @type {SVGGElement} */ (
+        svgElement("g", { transform: "scale(1 -1)", "data-probe-world": "" })
+    );
+    appendHitTree(world, fixture.parsedScene.tree, { a: 1, b: 0, tx: 0, c: 0, d: 1, ty: 0 });
+    const horizontal = svgElement("line", {
+        x1: left - padding,
+        x2: right + padding,
+        y1: 0,
+        y2: 0,
+        class: "probe-axis",
+    });
+    const vertical = svgElement("line", {
+        x1: 0,
+        x2: 0,
+        y1: bottom - padding,
+        y2: top + padding,
+        class: "probe-axis",
+    });
+    const cursor = svgElement("g", { "data-probe-cursor": "" });
+    cursor.append(
+        svgElement("circle", { r: 1.5 }),
+        svgElement("line", { x1: -3, x2: 3, y1: 0, y2: 0 }),
+        svgElement("line", { x1: 0, x2: 0, y1: -3, y2: 3 }),
+    );
+    world.append(horizontal, vertical, cursor);
+    svg.replaceChildren(world);
+    return {
+        left: left - padding,
+        right: right + padding,
+        bottom: bottom - padding,
+        top: top + padding,
+        world,
+        cursor,
+    };
+}
+
+/** @param {number[]} samples */
+function rollingMedian(samples) {
+    const sorted = [...samples].sort((left, right) => left - right);
+    return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
+async function createHitProbeSession() {
+    const { fetchHitSceneBenchmarkSuite } = await import("../scripts/lib/hit-scene-benchmark.mjs");
+    const suite = await fetchHitSceneBenchmarkSuite("./hit-scene-benchmark-suite.json");
+    const reference = await loadVirCandidate();
+    /** @type {any[]} */
+    const candidates = [
+        {
+            name: "vir",
+            label: "Reference VIR",
+            create: (/** @type {any} */ fixture) =>
+                reference.benchmark.create({ encodedScene: fixture.encodedScene }),
+            dispose: () => reference.dispose(),
+        },
+    ];
+    try {
+        candidates.push(await loadSpatialVirCandidate());
+    } catch (error) {
+        console.info("Spatial VIR live probe is unavailable", error);
+    }
+    const fir = await loadFirCandidate();
+    if (fir !== null) {
+        candidates.push({
+            name: "fir",
+            label: "FIR native Wasm",
+            create: (/** @type {any} */ fixture) =>
+                fir.benchmark.create({ encodedScene: fixture.encodedScene }),
+            dispose: () => fir.dispose(),
+        });
+    }
+    /** @type {Array<{ candidate: any, host: any, samples: number[] }>} */
+    let mounted = [];
+    let queryNumber = 0;
+
+    function unmount() {
+        for (const item of mounted.toReversed()) item.host.dispose();
+        mounted = [];
+    }
+
+    return {
+        fixtures: suite.fixtures,
+        candidates,
+        mount(/** @type {any} */ fixture) {
+            unmount();
+            mounted = candidates.map((candidate) => ({
+                candidate,
+                host: candidate.create(fixture),
+                samples: [],
+            }));
+            queryNumber = 0;
+        },
+        query(/** @type {number} */ x, /** @type {number} */ y) {
+            const order = mounted.map(
+                (_, index) => mounted[(index + queryNumber) % mounted.length],
+            );
+            queryNumber += 1;
+            const observations = order.map((item) => {
+                const started = now();
+                const result = item.host.query(x, y);
+                const duration = now() - started;
+                item.samples.push(duration);
+                if (item.samples.length > 120) item.samples.shift();
+                return {
+                    name: item.candidate.name,
+                    label: item.candidate.label,
+                    result,
+                    duration,
+                    median: rollingMedian(item.samples),
+                    count: item.samples.length,
+                };
+            });
+            const expected = observations[0]?.result;
+            for (const observation of observations.slice(1)) {
+                if (!sameResult(observation.result, expected)) {
+                    throw new Error(
+                        `live HitScene mismatch at (${x.toFixed(3)}, ${y.toFixed(3)}): ` +
+                            `${observations[0].name}=${JSON.stringify(expected)}, ` +
+                            `${observation.name}=${JSON.stringify(observation.result)}`,
+                    );
+                }
+            }
+            return observations;
+        },
+        dispose() {
+            unmount();
+            for (const candidate of candidates.toReversed()) candidate.dispose();
+        },
+    };
+}
+
+/** @param {any} result */
+function hitResultLabel(result) {
+    if (result?.kind === "tag") {
+        return result.label ? `tag ${result.value} · ${result.label}` : `tag ${result.value}`;
+    }
+    return result?.kind ?? "unknown";
+}
+
+function installHitProbe() {
+    const toggle = /** @type {HTMLButtonElement} */ (requireElement("[data-probe-toggle]"));
+    const fixtureSelect = /** @type {HTMLSelectElement} */ (requireElement("[data-probe-fixture]"));
+    const autoInput = /** @type {HTMLInputElement} */ (requireElement("[data-probe-auto]"));
+    const status = requireElement("[data-probe-status]");
+    const coordinates = requireElement("[data-probe-coordinates]");
+    const backendList = requireElement("[data-probe-backends]");
+    const svg = document.querySelector("[data-probe-svg]");
+    if (
+        !(toggle instanceof HTMLButtonElement) ||
+        !(fixtureSelect instanceof HTMLSelectElement) ||
+        !(autoInput instanceof HTMLInputElement) ||
+        !(svg instanceof SVGSVGElement)
+    ) {
+        throw new Error("HitScene live probe controls are incomplete");
+    }
+    const probeSvg = svg;
+    /** @type {Awaited<ReturnType<typeof createHitProbeSession>> | null} */
+    let session = null;
+    /** @type {ReturnType<typeof renderHitProbeScene> | null} */
+    let scene = null;
+    /** @type {number | null} */
+    let animationFrame = null;
+    let startedAt = 0;
+    let lastQueryAt = 0;
+    let disposed = false;
+
+    function selectedFixture() {
+        return (
+            session?.fixtures.find(
+                (/** @type {any} */ fixture) => fixture.name === fixtureSelect.value,
+            ) ?? null
+        );
+    }
+
+    function renderBackends() {
+        backendList.replaceChildren();
+        for (const candidate of session?.candidates ?? []) {
+            const card = element("article", `probe-backend ${candidate.name}`);
+            card.dataset.probeBackend = candidate.name;
+            card.append(
+                element("strong", "", candidate.label),
+                element("output", "probe-result", "waiting for a query"),
+                element("small", "probe-timing", "—"),
+            );
+            backendList.append(card);
+        }
+    }
+
+    function chooseFixture() {
+        const fixture = selectedFixture();
+        if (session === null || fixture === null) return;
+        session.mount(fixture);
+        scene = renderHitProbeScene(fixture, probeSvg);
+        renderBackends();
+        queryPoint((scene.left + scene.right) / 2, (scene.bottom + scene.top) / 2);
+    }
+
+    /** @param {number} x @param {number} y */
+    function queryPoint(x, y) {
+        if (session === null || scene === null) return;
+        const observations = session.query(x, y);
+        scene.cursor.setAttribute("transform", `translate(${x} ${y})`);
+        const result = observations[0]?.result;
+        scene.cursor.setAttribute("data-result", result?.kind ?? "unknown");
+        coordinates.textContent = `x ${x.toFixed(2)} · y ${y.toFixed(2)}`;
+        for (const observation of observations) {
+            const card = backendList.querySelector(`[data-probe-backend="${observation.name}"]`);
+            if (!(card instanceof HTMLElement)) continue;
+            const resultOutput = card.querySelector(".probe-result");
+            const timing = card.querySelector(".probe-timing");
+            if (resultOutput) resultOutput.textContent = hitResultLabel(observation.result);
+            if (timing) {
+                timing.textContent =
+                    `${milliseconds(observation.duration)} last · ` +
+                    `${milliseconds(observation.median)} rolling median · ` +
+                    `${observation.count} samples`;
+            }
+        }
+    }
+
+    /** @param {number} timestamp */
+    function animate(timestamp) {
+        animationFrame = null;
+        if (session === null || scene === null || disposed) return;
+        if (autoInput.checked && timestamp - lastQueryAt >= 32) {
+            const elapsed = (timestamp - startedAt) / 1000;
+            const centerX = (scene.left + scene.right) / 2;
+            const centerY = (scene.bottom + scene.top) / 2;
+            const radiusX = (scene.right - scene.left) * 0.43;
+            const radiusY = (scene.top - scene.bottom) * 0.39;
+            queryPoint(
+                centerX + Math.cos(elapsed * 0.91) * radiusX,
+                centerY + Math.sin(elapsed * 1.37) * radiusY,
+            );
+            lastQueryAt = timestamp;
+        }
+        animationFrame = requestAnimationFrame(animate);
+    }
+
+    function stop() {
+        if (animationFrame !== null) cancelAnimationFrame(animationFrame);
+        animationFrame = null;
+        session?.dispose();
+        session = null;
+        scene = null;
+        toggle.textContent = "Start live probe";
+        toggle.dataset.state = "stopped";
+        fixtureSelect.disabled = true;
+        autoInput.disabled = true;
+        status.textContent = "Probe stopped; retained scene handles and runtimes were released.";
+    }
+
+    toggle.addEventListener("click", async function () {
+        if (session !== null) {
+            stop();
+            return;
+        }
+        toggle.disabled = true;
+        status.textContent = "Loading retained reference VIR, spatial VIR, and FIR scenes…";
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        try {
+            session = await createHitProbeSession();
+            fixtureSelect.replaceChildren(
+                ...session.fixtures.map((/** @type {any} */ fixture) => {
+                    const option = document.createElement("option");
+                    option.value = fixture.name;
+                    option.textContent = `${fixture.name} · ${fixture.queries.length} oracle points`;
+                    return option;
+                }),
+            );
+            fixtureSelect.disabled = false;
+            autoInput.disabled = false;
+            chooseFixture();
+            startedAt = performance.now();
+            lastQueryAt = 0;
+            animationFrame = requestAnimationFrame(animate);
+            toggle.textContent = "Stop live probe";
+            toggle.dataset.state = "running";
+            status.textContent = `${session.candidates.length} retained backends active. Move over the scene or leave automatic motion enabled.`;
+        } catch (error) {
+            session?.dispose();
+            session = null;
+            status.textContent = `Live probe failed: ${error instanceof Error ? error.message : String(error)}`;
+        } finally {
+            toggle.disabled = false;
+        }
+    });
+    fixtureSelect.addEventListener("change", chooseFixture);
+    probeSvg.addEventListener("pointermove", function (event) {
+        if (session === null || scene === null) return;
+        autoInput.checked = false;
+        const point = probeSvg.createSVGPoint();
+        point.x = event.clientX;
+        point.y = event.clientY;
+        const screen = scene.world.getScreenCTM();
+        if (screen === null) return;
+        const local = point.matrixTransform(screen.inverse());
+        queryPoint(local.x, local.y);
+    });
+    window.addEventListener(
+        "pagehide",
+        function () {
+            disposed = true;
+            if (session !== null) stop();
+        },
+        { once: true },
+    );
+}
+
 /** @param {any} workload */
 function workloadRatio(workload) {
     const delta = workload.deltas?.firOverVir;
@@ -836,8 +1325,15 @@ async function loadSpatialPerformance() {
 async function main() {
     try {
         const response = await fetch("./hit-scene-performance.json", { cache: "no-store" });
-        if (!response.ok) throw new Error(`measurement report returned HTTP ${response.status}`);
-        render(/** @type {HitScenePerformanceReport} */ (await response.json()));
+        if (response.status === 404) {
+            requireElement("[data-status]").textContent =
+                "No stored measurement is staged; the live probe is available below.";
+            document.body.dataset.ready = "true";
+        } else {
+            if (!response.ok)
+                throw new Error(`measurement report returned HTTP ${response.status}`);
+            render(/** @type {HitScenePerformanceReport} */ (await response.json()));
+        }
         await loadWorkloadProfile();
         await loadSpatialPerformance();
         await loadHistory();
@@ -860,6 +1356,7 @@ liveButton.addEventListener("click", async function () {
         liveProgress.value = 0;
     }
     liveStatus.textContent = "Loading VIR, FIR, and the three retained-scene workloads…";
+    await new Promise((resolve) => requestAnimationFrame(resolve));
     try {
         const report = await runLiveMeasurement(function (completed, total, name) {
             if (liveProgress instanceof HTMLProgressElement) {
@@ -882,4 +1379,5 @@ liveButton.addEventListener("click", async function () {
     }
 });
 
+installHitProbe();
 void main();

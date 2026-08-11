@@ -1261,14 +1261,8 @@
             };
         }
 
-        /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
-        function mountVirSelectionCandidate(data, index) {
-            var container = document.querySelector(
-                '[data-example="' + String(index) + '"] [data-stage="candidate"]',
-            );
-            if (!(container instanceof HTMLElement)) {
-                throw new Error("VIR selection candidate container is missing");
-            }
+        /** @param {AnimData} data @param {HTMLElement} container @returns {ComparisonCandidate} */
+        function mountVirSelectionIn(data, container) {
             var renderer = createSelectionDomRenderer(data, container);
             return createVirSelectionPlayerHost(
                 runtime,
@@ -1282,15 +1276,9 @@
             );
         }
 
-        /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
-        function mountFirCandidate(data, index) {
+        /** @param {AnimData} data @param {HTMLElement} container @returns {ComparisonCandidate} */
+        function mountFirIn(data, container) {
             if (firAdapter === null) throw new Error("FIR live backend is unavailable");
-            var container = document.querySelector(
-                '[data-example="' + String(index) + '"] [data-stage="candidate"]',
-            );
-            if (!(container instanceof HTMLElement)) {
-                throw new Error("FIR candidate container is missing");
-            }
             var renderer = createSelectionDomRenderer(data, container);
             return createFirLivePlayerHost(
                 firAdapter,
@@ -1302,6 +1290,28 @@
                     return Boolean(phaseTiming?.checked);
                 },
             );
+        }
+
+        /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
+        function mountVirSelectionCandidate(data, index) {
+            var container = document.querySelector(
+                '[data-example="' + String(index) + '"] [data-stage="candidate"]',
+            );
+            if (!(container instanceof HTMLElement)) {
+                throw new Error("VIR selection candidate container is missing");
+            }
+            return mountVirSelectionIn(data, container);
+        }
+
+        /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
+        function mountFirCandidate(data, index) {
+            var container = document.querySelector(
+                '[data-example="' + String(index) + '"] [data-stage="candidate"]',
+            );
+            if (!(container instanceof HTMLElement)) {
+                throw new Error("FIR candidate container is missing");
+            }
+            return mountFirIn(data, container);
         }
 
         /** @type {"vir-selection" | "vir-full" | "fir"} */
@@ -1434,6 +1444,239 @@
         });
         updateCandidatePresentation();
 
+        var fixtureSelect = /** @type {HTMLSelectElement} */ (
+            document.getElementById("fixture-select")
+        );
+        var fixtureScrub = /** @type {HTMLInputElement} */ (
+            document.getElementById("fixture-scrub")
+        );
+        var fixtureFrame = document.getElementById("fixture-frame");
+        var fixtureParity = document.querySelector("[data-fixture-parity]");
+        /** @type {Array<{ id: string, player: LegacyPlayer | ComparisonCandidate }>} */
+        var fixturePlayers = [];
+        /** @type {number | null} */
+        var fixtureWaitingSince = null;
+        /** @type {number | null} */
+        var fixtureLoopSince = null;
+        /** @type {number | null} */
+        var fixtureFinishedSince = null;
+
+        examples.forEach(function (example, index) {
+            var option = document.createElement("option");
+            option.value = String(index);
+            option.textContent = String(index + 1).padStart(2, "0") + " · " + example.title;
+            fixtureSelect.appendChild(option);
+        });
+        var requestedFixture = new URLSearchParams(window.location.search).get("fixture");
+        if (requestedFixture !== null) {
+            var requestedKey = requestedFixture;
+            var requestedIndex = Number.parseInt(requestedFixture, 10);
+            if (!Number.isSafeInteger(requestedIndex)) {
+                requestedIndex = examples.findIndex(function (example) {
+                    return example.title.toLowerCase() === requestedKey.toLowerCase();
+                });
+            }
+            if (requestedIndex >= 0 && requestedIndex < examples.length) {
+                fixtureSelect.value = String(requestedIndex);
+            }
+        }
+
+        /** @param {string} id */
+        function fixtureCard(id) {
+            return /** @type {HTMLElement} */ (
+                document.querySelector('[data-fixture-backend="' + id + '"]')
+            );
+        }
+
+        /** @param {string} id */
+        function fixtureStage(id) {
+            return /** @type {HTMLElement} */ (
+                document.querySelector('[data-fixture-stage="' + id + '"]')
+            );
+        }
+
+        /** @param {string} id @param {"ready" | "unavailable" | "error"} state @param {string} message */
+        function setFixtureState(id, state, message) {
+            var card = fixtureCard(id);
+            card.dataset.state = state;
+            var output = card.querySelector("[data-fixture-state]");
+            if (output) output.textContent = message;
+        }
+
+        function disposeFixturePlayers() {
+            fixturePlayers.reverse().forEach(function (entry) {
+                entry.player.dispose();
+            });
+            fixturePlayers = [];
+        }
+
+        /** @param {string} id @param {() => LegacyPlayer | ComparisonCandidate} mount */
+        function mountFixturePlayer(id, mount) {
+            try {
+                var player = mount();
+                fixturePlayers.push({ id: id, player: player });
+                setFixtureState(id, "ready", "ready");
+            } catch (error) {
+                setFixtureState(
+                    id,
+                    "error",
+                    error instanceof Error ? error.message : String(error),
+                );
+            }
+        }
+
+        function resetFixtureTimers() {
+            fixtureWaitingSince = null;
+            fixtureLoopSince = null;
+            fixtureFinishedSince = null;
+        }
+
+        function mountFocusedFixture() {
+            disposeFixturePlayers();
+            resetFixtureTimers();
+            var index = Number(fixtureSelect.value);
+            var example = examples[index];
+            if (!example) throw new Error("focused animation fixture is missing");
+            for (var id of ["js", "vir", "fir"]) fixtureStage(id).replaceChildren();
+            mountFixturePlayer("js", function () {
+                return mountLegacy(example.data, fixtureStage("js"));
+            });
+            mountFixturePlayer("vir", function () {
+                return mountVirSelectionIn(example.data, fixtureStage("vir"));
+            });
+            if (firAdapter === null) {
+                fixtureStage("fir").textContent = "Stage the accepted FIR selection package.";
+                setFixtureState("fir", "unavailable", "package not staged");
+            } else {
+                mountFixturePlayer("fir", function () {
+                    return mountFirIn(example.data, fixtureStage("fir"));
+                });
+            }
+            fixtureScrub.max = String(example.data.totalFrames - 1);
+            fixtureScrub.value = "0";
+            if (fixtureFrame) {
+                fixtureFrame.textContent = "0 / " + String(example.data.totalFrames - 1);
+            }
+            if (fixtureParity) {
+                fixtureParity.textContent =
+                    String(fixturePlayers.length) + "/4 backends ready · checking DOM parity";
+                fixtureParity.classList.remove("mismatch");
+            }
+            var url = new URL(window.location.href);
+            url.searchParams.set("fixture", String(index));
+            window.history.replaceState(null, "", url);
+        }
+
+        function advanceFocusedFixture() {
+            fixturePlayers.forEach(function (entry) {
+                entry.player.advance();
+            });
+        }
+
+        function pauseFocusedFixture() {
+            fixturePlayers.forEach(function (entry) {
+                entry.player.pause();
+            });
+        }
+
+        /** @param {number} frame */
+        function seekFocusedFixture(frame) {
+            fixturePlayers.forEach(function (entry) {
+                entry.player.seek(frame);
+            });
+            resetFixtureTimers();
+        }
+
+        function focusedFixtureSnapshot() {
+            var jsEntry = fixturePlayers.find(function (entry) {
+                return entry.id === "js";
+            });
+            return jsEntry && "snapshot" in jsEntry.player
+                ? /** @type {LegacyPlayer} */ (jsEntry.player).snapshot()
+                : null;
+        }
+
+        /** @param {number} currentTime */
+        function refreshFocusedFixture(currentTime) {
+            var snapshot = focusedFixtureSnapshot();
+            if (snapshot === null) return;
+            fixtureScrub.value = String(snapshot.frame);
+            var example = examples[Number(fixtureSelect.value)];
+            if (fixtureFrame && example) {
+                fixtureFrame.textContent =
+                    String(snapshot.frame) + " / " + String(example.data.totalFrames - 1);
+            }
+            var jsSvg = fixtureStage("js").firstElementChild;
+            var compared = fixturePlayers.filter(function (entry) {
+                return entry.id !== "js";
+            });
+            var matches = false;
+            if (jsSvg !== null) {
+                var baselineSvg = jsSvg;
+                matches = compared.every(function (entry) {
+                    var candidateSvg = fixtureStage(entry.id).firstElementChild;
+                    return candidateSvg !== null && baselineSvg.isEqualNode(candidateSvg);
+                });
+            }
+            if (fixtureParity) {
+                fixtureParity.textContent = matches
+                    ? String(fixturePlayers.length) + "/4 ready · DOM match"
+                    : String(fixturePlayers.length) + "/4 ready · between frames";
+                fixtureParity.classList.toggle("mismatch", !matches);
+            }
+            var autoCycle = /** @type {HTMLInputElement} */ (
+                document.getElementById("comparison-auto-cycle")
+            );
+            if (!autoCycle.checked) return;
+            if (snapshot.playback === "waiting") {
+                fixtureWaitingSince = fixtureWaitingSince ?? currentTime;
+                if (currentTime - fixtureWaitingSince > 700) {
+                    advanceFocusedFixture();
+                    fixtureWaitingSince = null;
+                }
+            } else {
+                fixtureWaitingSince = null;
+            }
+            var step = example?.data.steps[snapshot.step];
+            if (
+                snapshot.playback === "looping" &&
+                step &&
+                snapshot.step + 1 < example.data.steps.length
+            ) {
+                fixtureLoopSince = fixtureLoopSince ?? currentTime;
+                if (currentTime - fixtureLoopSince > 1500) {
+                    advanceFocusedFixture();
+                    fixtureLoopSince = null;
+                }
+            } else {
+                fixtureLoopSince = null;
+            }
+            if (snapshot.playback === "finished") {
+                fixtureFinishedSince = fixtureFinishedSince ?? currentTime;
+                if (currentTime - fixtureFinishedSince > 700) {
+                    seekFocusedFixture(0);
+                    advanceFocusedFixture();
+                    fixtureFinishedSince = null;
+                }
+            } else {
+                fixtureFinishedSince = null;
+            }
+        }
+
+        fixtureSelect.addEventListener("change", function () {
+            mountFocusedFixture();
+            advanceFocusedFixture();
+        });
+        document
+            .getElementById("fixture-advance")
+            ?.addEventListener("click", advanceFocusedFixture);
+        document.getElementById("fixture-pause")?.addEventListener("click", pauseFocusedFixture);
+        fixtureScrub.addEventListener("input", function () {
+            seekFocusedFixture(Number(fixtureScrub.value));
+        });
+        mountFocusedFixture();
+        advanceFocusedFixture();
+
         /** @param {ComparisonRow} row */
         function advanceRow(row) {
             // requestAnimationFrame preserves registration order closely enough that the
@@ -1513,6 +1756,7 @@
 
         function refreshDashboard() {
             var now = performance.now();
+            refreshFocusedFixture(now);
             /** @type {{ js: DashboardEngineTotals, candidate: DashboardEngineTotals }} */
             var engineTotals = {
                 js: {
@@ -1775,8 +2019,9 @@
             String(rows.length) +
             " examples · " +
             String(rows.length * 2) +
-            " owned players · FIR " +
-            (firAdapter === null ? "not staged" : "live available");
+            " analyzer players · " +
+            String(fixturePlayers.length) +
+            "/4 focused backends · LLVM package pending";
         status.dataset.state = "ready";
         document.body.dataset.ready = "true";
         rows.forEach(advanceRow);
@@ -1788,6 +2033,7 @@
                 clearInterval(refreshTimer);
                 virTiming.removeEventListener("change", updateVirTiming);
                 runtime.setCallbackTimingObserver(null);
+                disposeFixturePlayers();
                 rows.forEach(function (row) {
                     row.legacy.dispose();
                     row.candidate.dispose();
