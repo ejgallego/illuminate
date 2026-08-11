@@ -603,6 +603,103 @@ function renderTierPerformance(report) {
     }
 }
 
+/** @param {any} report */
+function renderSpatialPerformance(report) {
+    if (report.schemaVersion !== "illuminate.vir-spatial-hit-scene-performance/v2") {
+        throw new Error(`unsupported spatial report ${String(report.schemaVersion)}`);
+    }
+    const panel = requireElement("[data-spatial-panel]");
+    const summary = requireElement("[data-spatial-summary]");
+    const container = requireElement("[data-spatial-workloads]");
+    const spatialStability = report.stability?.spatial;
+    const stabilityText = spatialStability
+        ? ` ${spatialStability.simultaneousInstances} simultaneous spatial instances stayed at ` +
+          `${(spatialStability.memoryAfterQueries / (1024 * 1024)).toFixed(1)} MiB through ` +
+          `${spatialStability.measuredQueries.toLocaleString()} path queries and peer disposal.`
+        : "";
+    summary.textContent =
+        `Measured ${new Date(report.generatedAt).toLocaleString()} with ` +
+        `${report.protocol.measuredRounds} production and ${report.protocol.profileRounds} ` +
+        `diagnostic rounds. Blue is reference VIR; purple is spatial VIR.${stabilityText}`;
+    container.replaceChildren();
+    for (const workload of report.workloads ?? []) {
+        const reference = workload.timing.reference.query.medianMs;
+        const spatial = workload.timing.spatial.query.medianMs;
+        const scale = Math.max(reference, spatial, 0.000001);
+        const card = element("article", "workload-card");
+        const title = element("div", "workload-title");
+        title.append(
+            element("h3", "", workload.name),
+            element("span", "badge", workload.geometryClass),
+        );
+        const bars = element("div", "tier-bars");
+        for (const [backend, value] of [
+            ["reference", reference],
+            ["spatial", spatial],
+        ]) {
+            const row = element("div", `tier-row ${backend}`);
+            const track = element("i", "");
+            const fill = element("b", "");
+            fill.style.width = `${Math.max(1, (100 * value) / scale)}%`;
+            track.append(fill);
+            row.append(
+                element("span", "", backend === "reference" ? "REF" : "IDX"),
+                track,
+                element("output", "", milliseconds(value)),
+            );
+            bars.append(row);
+        }
+        const classRows = element("div", "spatial-classes");
+        const classes = Object.entries(workload.classRatios?.byQueryAndResultClass ?? {}).sort(
+            ([, left], [, right]) =>
+                right.referenceExecute.medianMs - left.referenceExecute.medianMs,
+        );
+        for (const [name, result] of classes) {
+            const classScale = Math.max(
+                result.referenceExecute.medianMs,
+                result.spatialExecute.medianMs,
+                0.000001,
+            );
+            const row = element("div", "spatial-class");
+            const classBars = element("div", "spatial-class-bars");
+            for (const value of [
+                result.referenceExecute.medianMs,
+                result.spatialExecute.medianMs,
+            ]) {
+                const track = element("i", "");
+                const fill = element("b", "");
+                fill.style.width = `${Math.max(1, (100 * value) / classScale)}%`;
+                track.append(fill);
+                classBars.append(track);
+            }
+            row.title =
+                `${name} · ${result.samplesPerBackend} samples/backend · ` +
+                `reference ${milliseconds(result.referenceExecute.medianMs)} · ` +
+                `spatial ${milliseconds(result.spatialExecute.medianMs)}`;
+            row.append(
+                element("span", "", name),
+                classBars,
+                element("output", "", `${result.executeSpeedupMedian.toFixed(2)}×`),
+            );
+            classRows.append(row);
+        }
+        card.append(
+            title,
+            metric("Encoded scene", `${workload.encodedBytes.toLocaleString()} B`),
+            metric("Queries", workload.queryCount.toLocaleString()),
+            bars,
+            element(
+                "output",
+                "tier-ratio",
+                `Spatial ${(reference / spatial).toFixed(2)}× faster at median`,
+            ),
+            classRows,
+        );
+        container.append(card);
+    }
+    panel.hidden = false;
+}
+
 /** @param {any} workload */
 function workloadRatio(workload) {
     const delta = workload.deltas?.firOverVir;
@@ -726,12 +823,23 @@ async function loadWorkloadProfile() {
     );
 }
 
+async function loadSpatialPerformance() {
+    const response = await fetch("./vir-spatial-hit-scene-performance.json", {
+        cache: "no-store",
+    });
+    if (response.status === 404) return;
+    renderSpatialPerformance(
+        await requireOk(response, "VIR spatial performance report").then((item) => item.json()),
+    );
+}
+
 async function main() {
     try {
         const response = await fetch("./hit-scene-performance.json", { cache: "no-store" });
         if (!response.ok) throw new Error(`measurement report returned HTTP ${response.status}`);
         render(/** @type {HitScenePerformanceReport} */ (await response.json()));
         await loadWorkloadProfile();
+        await loadSpatialPerformance();
         await loadHistory();
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);

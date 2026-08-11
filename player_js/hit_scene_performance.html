@@ -358,6 +358,9 @@
             .tier-row.fir b {
                 background: #5bd6aa;
             }
+            .tier-row.spatial b {
+                background: linear-gradient(90deg, #ad7cff, #e58bd7);
+            }
             .tier-row output {
                 text-align: right;
             }
@@ -366,6 +369,55 @@
                 color: #89e5c4;
                 font:
                     750 12px ui-monospace,
+                    monospace;
+                text-align: right;
+            }
+            .spatial-classes {
+                display: grid;
+                grid-column: 1 / -1;
+                gap: 9px;
+                padding-top: 4px;
+                border-top: 1px solid #26395e;
+            }
+            .spatial-class {
+                display: grid;
+                grid-template-columns: minmax(88px, 0.65fr) minmax(130px, 1.35fr) 58px;
+                gap: 8px;
+                align-items: center;
+            }
+            .spatial-class > span {
+                overflow: hidden;
+                color: #96a7c7;
+                font:
+                    9px ui-monospace,
+                    monospace;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .spatial-class-bars {
+                display: grid;
+                gap: 3px;
+            }
+            .spatial-class-bars i {
+                display: block;
+                height: 5px;
+                overflow: hidden;
+                border-radius: 999px;
+                background: #070e1d;
+            }
+            .spatial-class-bars b {
+                display: block;
+                height: 100%;
+                border-radius: inherit;
+                background: #6d96ff;
+            }
+            .spatial-class-bars i:last-child b {
+                background: linear-gradient(90deg, #ad7cff, #e58bd7);
+            }
+            .spatial-class output {
+                color: #d9a8e8;
+                font:
+                    750 9px ui-monospace,
                     monospace;
                 text-align: right;
             }
@@ -500,6 +552,15 @@
                     suite replaces all three. VIR and FIR bars share a local scale in each workload.
                 </p>
                 <div class="workload-grid" data-workloads></div>
+            </section>
+            <section class="details" data-spatial-panel hidden>
+                <h2>Reference VIR / spatial VIR experiment</h2>
+                <p data-spatial-summary>
+                    Both variants use the same typed scene transport, scalar query boundary, result
+                    decoder, and retained resource lifecycle. Purple bars add balanced subtree
+                    guards; class rows compare instrumented Lean execution.
+                </p>
+                <div class="workload-grid" data-spatial-workloads></div>
             </section>
             <section class="details" data-history-panel hidden>
                 <h2>Recorded FIR/VIR history</h2>

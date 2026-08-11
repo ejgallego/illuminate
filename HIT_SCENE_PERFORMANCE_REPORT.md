@@ -235,12 +235,40 @@ guards. An independent full repeat put the median speedups at 1.07×,
 ambient load while the direction is stable. This candidate is useful
 evidence, but not yet a production switch.
 
+The class-attributed diagnostic makes the result more specific:
+
+| Workload / class        | Samples | Reference execute | Spatial execute | Median speedup |
+| ----------------------- | ------: | ----------------: | --------------: | -------------: |
+| bounds grid miss        |     215 |             41 µs |           26 µs |          1.59× |
+| mixed grid miss         |     820 |            197 µs |           13 µs |         15.56× |
+| mixed named miss        |       5 |            212 µs |           10 µs |         21.51× |
+| mixed untagged grid hit |     385 |             60 µs |           23 µs |          2.66× |
+| mixed tagged grid hit   |     240 |            691 µs |          696 µs |          0.99× |
+| path grid miss          |   1,325 |            293 µs |           29 µs |         10.09× |
+| path tagged grid hit    |   1,800 |            874 µs |          831 µs |          1.05× |
+
+Subtree guards are doing exactly one useful job: they make misses, and
+some untagged hits, cheap. Tagged hits dominate the expensive tail and
+usually remain unchanged because front-to-back semantics still require
+testing overlapping higher layers. The path fixture is further limited
+by filled paths' intentionally unbounded left side. Small regressions
+on some boundary and numeric-edge tagged groups are guard overhead on
+paths that cannot be skipped; they do not indicate a boundary
+conversion cost.
+
 The candidate VIR package is 22,600 bytes versus 22,074 bytes for the
 reference package, an increase of 526 bytes (2.4%). It loads 278 Lean
 IR declarations and 57 native externs versus 246 and 53. The VIR
 runtime Wasm is identical. Creation ratios are deliberately not used
 as evidence because the current harness records one fixed-order mount
 sample per workload.
+
+The retained-resource gate also passed. Both reference and spatial VIR
+held their module-owned memory at 4,194,304 bytes after warm-up and
+through 10,000 path queries with two simultaneous scene instances.
+Disposing one instance left its replacement operational. This removes
+memory growth and cross-instance ownership from the candidate's open
+risks.
 
 Reproduce the experiment with:
 
@@ -250,10 +278,10 @@ npm run stage:vir-spatial-hit-scene
 npm run measure:vir-spatial-hit-scene
 ```
 
-The gitignored detailed result is
+The gitignored v2 detailed result is
 `test_output/vir-spatial-hit-scene-performance.json`. No FIR
-regeneration is requested until query-class analysis and tail behavior
-justify accepting the representation.
+regeneration is requested until the remaining tagged-hit tradeoff is
+accepted and the representation is selected for production.
 
 ## Conclusions and next actions
 
@@ -262,14 +290,16 @@ justify accepting the representation.
 2. Treat FIR as the compiled semantic control. Its 7.2× to 20.6× tier
    speedup attributes most remaining geometry cost to VIR interpreter
    execution rather than its retained boundary.
-3. Keep the accepted conservative prepared-path bounds. The opt-in
-   spatial experiment confirms that subtree rejection can reduce
-   median execution, but its mixed p95 needs query-class study before
-   adoption or FIR rebuild.
-4. Re-run the query-class and result-class breakdown for the spatial
-   candidate; full-scene misses are the most sensitive regression
-   signal.
-5. Preserve the 301-query semantic differential and 10,000-query 4 MiB
+3. Keep the opt-in spatial candidate: miss execution improves by 1.59×
+   to 21.51× while tagged hits are mostly neutral, and its
+   10,000-query memory/replacement gate passes. Decide whether that
+   workload tradeoff justifies making the representation
+   production-facing.
+4. Treat finite-left fill bounds as a separate semantic experiment.
+   They require intentionally changing the current parity-ray edge
+   behavior and must not be folded into this semantics-preserving
+   candidate.
+5. Preserve the 1,009-query semantic suite and 10,000-query 4 MiB
    memory plateau as acceptance gates.
 
 No VIR marshalling API request follows from these results. Even on the

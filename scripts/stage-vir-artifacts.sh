@@ -6,7 +6,7 @@ repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 vir_root="$repo_root/vir"
 
 if [ "$#" -eq 0 ]; then
-  set -- animation hit-scene
+  set -- animation hit-scene spatial-hit-scene
 fi
 
 stage_animation=false

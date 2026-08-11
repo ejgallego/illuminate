@@ -18,6 +18,7 @@ const outputPath =
 const warmupRounds = quick ? 2 : 5;
 const measuredRounds = quick ? 5 : 20;
 const profileRounds = quick ? 2 : 5;
+const stabilityQueries = quick ? 1_000 : 10_000;
 
 function sha256(value) {
     return createHash("sha256").update(value).digest("hex");
@@ -54,12 +55,109 @@ function summarizeObservations(observations) {
     );
 }
 
+function groupObservations(records, field) {
+    const names = [...new Set(records.map((record) => record[field]))].sort();
+    return Object.fromEntries(
+        names.map((name) => [
+            name,
+            summarizeObservations(
+                records
+                    .filter((record) => record[field] === name)
+                    .map((record) => record.observation),
+            ),
+        ]),
+    );
+}
+
+function summarizeProfile(records) {
+    return {
+        aggregate: summarizeObservations(records.map((record) => record.observation)),
+        byQueryClass: groupObservations(records, "queryClass"),
+        byResultClass: groupObservations(records, "resultClass"),
+        byQueryAndResultClass: groupObservations(records, "queryAndResultClass"),
+    };
+}
+
+function groupRatios(referenceGroups, spatialGroups) {
+    const names = [
+        ...new Set([...Object.keys(referenceGroups), ...Object.keys(spatialGroups)]),
+    ].sort();
+    return Object.fromEntries(
+        names.map((name) => {
+            const reference = referenceGroups[name]?.executeMs;
+            const spatial = spatialGroups[name]?.executeMs;
+            if (reference === undefined || spatial === undefined) {
+                throw new Error(`incomplete spatial diagnostic group ${name}`);
+            }
+            return [
+                name,
+                {
+                    samplesPerBackend: reference.count,
+                    referenceExecute: reference,
+                    spatialExecute: spatial,
+                    executeSpeedupMedian: reference.medianMs / spatial.medianMs,
+                    executeSpeedupMean: reference.meanMs / spatial.meanMs,
+                    executeSpeedupP95: reference.p95Ms / spatial.p95Ms,
+                },
+            ];
+        }),
+    );
+}
+
 function sameResult(actual, expected) {
     return (
         actual.kind === expected.kind &&
         (expected.kind !== "tag" ||
             (actual.value === expected.value && actual.label === expected.label))
     );
+}
+
+function verifyStability(name, runtime, createHost, fixture) {
+    const first = createHost(runtime, fixture.encodedScene);
+    const replacement = createHost(runtime, fixture.encodedScene);
+    let firstDisposed = false;
+    try {
+        for (let index = 0; index < 100; index += 1) {
+            const query = fixture.queries[index % fixture.queries.length];
+            if (!sameResult(replacement.query(query.x, query.y), query.expected)) {
+                throw new Error(`${name} warmup mismatch at ${query.name}`);
+            }
+        }
+        const memoryAfterWarmup = runtime.exports.memory.buffer.byteLength;
+        for (let index = 0; index < stabilityQueries; index += 1) {
+            const query = fixture.queries[index % fixture.queries.length];
+            if (!sameResult(replacement.query(query.x, query.y), query.expected)) {
+                throw new Error(`${name} stability mismatch at ${query.name}`);
+            }
+        }
+        const memoryAfterQueries = runtime.exports.memory.buffer.byteLength;
+        if (memoryAfterQueries !== memoryAfterWarmup) {
+            throw new Error(
+                `${name} memory grew from ${memoryAfterWarmup} to ${memoryAfterQueries} bytes`,
+            );
+        }
+        first.dispose();
+        firstDisposed = true;
+        const survivorQuery = fixture.queries.at(-1);
+        if (
+            survivorQuery === undefined ||
+            !sameResult(replacement.query(survivorQuery.x, survivorQuery.y), survivorQuery.expected)
+        ) {
+            throw new Error(`${name} replacement failed after peer disposal`);
+        }
+        return {
+            fixture: fixture.name,
+            simultaneousInstances: 2,
+            warmupQueries: 100,
+            measuredQueries: stabilityQueries,
+            memoryAfterWarmup,
+            memoryAfterQueries,
+            independentAfterPeerDispose: true,
+        };
+    } finally {
+        replacement.dispose();
+        if (!firstDisposed) first.dispose();
+    }
 }
 
 async function loadRuntime(descriptorPath) {
@@ -117,25 +215,28 @@ const spatialBackend = {
 };
 
 function profileFixture(fixture) {
+    function createCandidate(name, createHost) {
+        const candidate = { name, records: [], currentQuery: null, host: null };
+        candidate.host = createHost((observation) => {
+            if (observation.kind !== "query") return;
+            const query = candidate.currentQuery;
+            if (query === null) throw new Error(`${name} emitted an unattributed observation`);
+            candidate.records.push({
+                observation,
+                queryClass: query.queryClass,
+                resultClass: query.resultClass,
+                queryAndResultClass: `${query.queryClass}/${query.resultClass}`,
+            });
+        });
+        return candidate;
+    }
     const candidates = [
-        {
-            name: "reference",
-            observations: [],
-            host: createVirHitSceneHost(reference.runtime, fixture.encodedScene, (observation) => {
-                if (observation.kind === "query") candidates[0].observations.push(observation);
-            }),
-        },
-        {
-            name: "spatial",
-            observations: [],
-            host: createVirSpatialHitSceneHost(
-                spatial.runtime,
-                fixture.encodedScene,
-                (observation) => {
-                    if (observation.kind === "query") candidates[1].observations.push(observation);
-                },
-            ),
-        },
+        createCandidate("reference", (observer) =>
+            createVirHitSceneHost(reference.runtime, fixture.encodedScene, observer),
+        ),
+        createCandidate("spatial", (observer) =>
+            createVirSpatialHitSceneHost(spatial.runtime, fixture.encodedScene, observer),
+        ),
     ];
     try {
         for (let round = 0; round < 1 + profileRounds; round += 1) {
@@ -144,18 +245,25 @@ function profileFixture(fixture) {
             );
             for (const query of fixture.queries) {
                 for (const candidate of order) {
-                    const actual = candidate.host.query(query.x, query.y);
-                    if (!sameResult(actual, query.expected)) {
-                        throw new Error(`${candidate.name} diagnostic mismatch at ${query.name}`);
+                    candidate.currentQuery = query;
+                    try {
+                        const actual = candidate.host.query(query.x, query.y);
+                        if (!sameResult(actual, query.expected)) {
+                            throw new Error(
+                                `${candidate.name} diagnostic mismatch at ${query.name}`,
+                            );
+                        }
+                    } finally {
+                        candidate.currentQuery = null;
                     }
                 }
             }
             if (round === 0) {
-                for (const candidate of candidates) candidate.observations.length = 0;
+                for (const candidate of candidates) candidate.records.length = 0;
             }
         }
         return Object.fromEntries(
-            candidates.map(({ name, observations }) => [name, summarizeObservations(observations)]),
+            candidates.map(({ name, records }) => [name, summarizeProfile(records)]),
         );
     } finally {
         for (const candidate of candidates.toReversed()) candidate.host.dispose();
@@ -171,12 +279,28 @@ try {
             { warmupRounds, measuredRounds, now: () => performance.now() },
         );
         const diagnostics = profileFixture(fixture);
+        const classRatios = {
+            byQueryClass: groupRatios(
+                diagnostics.reference.byQueryClass,
+                diagnostics.spatial.byQueryClass,
+            ),
+            byResultClass: groupRatios(
+                diagnostics.reference.byResultClass,
+                diagnostics.spatial.byResultClass,
+            ),
+            byQueryAndResultClass: groupRatios(
+                diagnostics.reference.byQueryAndResultClass,
+                diagnostics.spatial.byQueryAndResultClass,
+            ),
+        };
         workloads.push({
             name: fixture.name,
             geometryClass: fixture.geometryClass,
             queryCount: fixture.queries.length,
+            encodedBytes: fixture.encodedScene.length,
             timing,
             diagnostics,
+            classRatios,
             ratios: {
                 spatialOverReferenceMedian:
                     timing.spatial.query.medianMs / timing.reference.query.medianMs,
@@ -186,13 +310,29 @@ try {
                 spatialOverReferenceCreation:
                     timing.spatial.creationMs / timing.reference.creationMs,
                 spatialOverReferenceExecuteMedian:
-                    diagnostics.spatial.executeMs.medianMs /
-                    diagnostics.reference.executeMs.medianMs,
+                    diagnostics.spatial.aggregate.executeMs.medianMs /
+                    diagnostics.reference.aggregate.executeMs.medianMs,
             },
         });
     }
+    const stabilityFixture = suite.fixtures.find((fixture) => fixture.geometryClass === "paths");
+    if (stabilityFixture === undefined) throw new Error("path stability fixture is missing");
+    const stability = {
+        reference: verifyStability(
+            "reference",
+            reference.runtime,
+            createVirHitSceneHost,
+            stabilityFixture,
+        ),
+        spatial: verifyStability(
+            "spatial",
+            spatial.runtime,
+            createVirSpatialHitSceneHost,
+            stabilityFixture,
+        ),
+    };
     const report = {
-        schemaVersion: "illuminate.vir-spatial-hit-scene-performance/v1",
+        schemaVersion: "illuminate.vir-spatial-hit-scene-performance/v2",
         generatedAt: new Date().toISOString(),
         protocol: {
             fixturePath,
@@ -204,6 +344,8 @@ try {
             identicalScalarQueryBoundary: true,
             identicalResultDecoder: true,
             semanticOracleCheckedBeforeTiming: true,
+            diagnosticQueriesAttributedByClass: true,
+            stabilityQueries,
             creationOrderBalanced: false,
             creationRatiosExploratoryOnly: true,
         },
@@ -212,6 +354,7 @@ try {
             spatial: spatial.metadata,
         },
         workloads,
+        stability,
     };
     await writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
     console.log(
@@ -227,6 +370,7 @@ try {
                     speedupMedian: 1 / ratios.spatialOverReferenceMedian,
                     executeSpeedupMedian: 1 / ratios.spatialOverReferenceExecuteMedian,
                 })),
+                stability,
             },
             null,
             2,

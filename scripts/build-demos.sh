@@ -41,6 +41,7 @@ else
   npm run measure:hit-scene -- --suite --quick
 fi
 npm run profile:vir-hit-scene -- --quick
+npm run measure:vir-spatial-hit-scene -- --quick
 npm run stage:hit-scene-performance
 
 cp "$repo_root/player_js/demo-index.html" "$repo_root/test_output/index.html"

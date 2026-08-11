@@ -8,12 +8,14 @@ demo_port="${ILLUMINATE_DEMO_PORT:-8765}"
 cd "$repo_root"
 lake test --wfail
 npm run stage:vir-hit-scene
+npm run stage:vir-spatial-hit-scene
 if [ -n "${ILLUMINATE_FIR_HIT_SCENE_DIR:-}" ]; then
   npm run stage:fir-hit-scene
 fi
 npm run measure:hit-scene
 npm run measure:hit-scene -- --suite --quick
 npm run profile:vir-hit-scene -- --quick
+npm run measure:vir-spatial-hit-scene -- --quick
 npm run stage:hit-scene-performance
 
 echo "Illuminate VIR / FIR HitScene performance:"
