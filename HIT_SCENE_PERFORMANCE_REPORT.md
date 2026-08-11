@@ -26,8 +26,8 @@ from the original `Diagram.hitTest` oracle:
 | Workload       | Geometry | Encoded scene | Queries |
 | -------------- | -------- | ------------: | ------: |
 | `bounds-small` | bounds   |         558 B |      83 |
-| `mixed-medium` | mixed    |       4,088 B |     301 |
-| `paths-large`  | paths    |      44,610 B |     625 |
+| `mixed-medium` | mixed    |       4,532 B |     301 |
+| `paths-large`  | paths    |      50,730 B |     625 |
 
 Stage the final FIR package, run the paired production measurements,
 and stage the visual report with:
@@ -80,67 +80,61 @@ VIR asset service.
 
 ## Final FIR package and paired result
 
-Illuminate consumes the immutable FIR package
-`illuminate-hit-scene-960979c729bc1199`. Its Wasm is 45,595 bytes with
-SHA-256
-`960979c729bc119988abba24046c4bccd294f3346300d6d20ce53175b5f062d6`,
+Illuminate consumes the immutable FIR v2 package
+`illuminate-hit-scene-75c51b9f3d04fbcd`, built at FIR commit
+`c780c94b724b61aba8be222fc6ceb3bc454e3ef0` from exact Illuminate
+revision `88dcfee895a55e804641bff485024cffec1b5419`. Its Wasm is
+46,089 bytes with SHA-256
+`06708aac339cd7f6f7fcbe7c973dc29125e263925635d0311a0571d4428e97b7`,
 zero imports, module-owned memory, and six function exports plus
 memory. The adapter retains one encoded scene per instance and exposes
 an untimed `hitTest` for production plus `hitTestDiagnostic` for phase
-attribution. The Illuminate consumer gate covers 301 oracle queries,
-10,000 flat-frontier queries, exact binary64 boundary coordinates, two
-instances, disposal, and checksum/export validation.
+attribution. The package smoke covers 301 oracle queries, 10,000
+flat-frontier queries, exact binary64 boundary coordinates, two
+instances, disposal, and checksum/export validation. Illuminate's
+consumer additionally matched all 1,009 distinct queries across the
+three workload tiers.
 
-The full medium run used two warm-up rounds and ten measured rounds,
-or 3,010 queries per backend:
-
-| Backend | Median query | Mean query | 95th percentile |
-| ------- | -----------: | ---------: | --------------: |
-| VIR     |     0.585 ms |   0.533 ms |        0.846 ms |
-| FIR     |     0.041 ms |   0.038 ms |        0.062 ms |
-
-FIR took 6.9% of VIR's median production time, making compiled FIR
-about 14.4× faster on this retained mixed scene. The separate
-diagnostic execute ratio was 6.5%, consistent with the production
-ratio and independent of boundary instrumentation.
-
-The tier run used one warm-up round and two measured rounds. Absolute
-times remain machine-sensitive; the paired ratios are the result:
+The acceptance run used two warm-up rounds and ten measured rounds for
+every workload. Absolute times remain machine-sensitive; the balanced
+paired ratios are the result:
 
 | Workload       | VIR median | FIR median | FIR / VIR | FIR speedup |
 | -------------- | ---------: | ---------: | --------: | ----------: |
-| `bounds-small` |   0.018 ms |   0.003 ms |     18.5% |        5.4× |
-| `mixed-medium` |   0.871 ms |   0.063 ms |      7.3% |       13.7× |
-| `paths-large`  |  10.288 ms |   0.540 ms |      5.2% |       19.1× |
+| `bounds-small` |   0.044 ms |   0.006 ms |     13.9% |        7.2× |
+| `mixed-medium` |   0.307 ms |   0.015 ms |      4.8% |       20.6× |
+| `paths-large`  |   0.586 ms |   0.036 ms |      6.1% |       16.5× |
 
-The increasing speedup with geometry complexity is the key signal: the
-dominant difference is compiled execution versus VIR interpretation,
-not input or result conversion.
+FIR is substantially faster for all three retained scenes. The mixed
+and path-heavy ratios remain dominated by compiled execution versus
+VIR interpretation, not input or result conversion. Bounds-only calls
+are short enough that fixed boundary work is a larger share, but FIR
+still takes only 13.9% of VIR's median production time.
 
 ## VIR diagnostic result
 
-The full run uses one warm-up round followed by eight instrumented
-rounds. These are `runtime.callTimed` diagnostic medians, not portable
-acceptance thresholds:
+The acceptance run uses one diagnostic warm-up followed by five
+instrumented rounds. These are `runtime.callTimed` diagnostic medians,
+not portable acceptance thresholds:
 
 | Workload       | Wall time | Lean execution |  Marshal |   Decode |
 | -------------- | --------: | -------------: | -------: | -------: |
-| `bounds-small` |  0.092 ms |       0.053 ms | 0.005 ms | 0.007 ms |
-| `mixed-medium` |  1.946 ms |       1.841 ms | 0.008 ms | 0.011 ms |
-| `paths-large`  | 19.550 ms |      19.462 ms | 0.010 ms | 0.020 ms |
+| `bounds-small` |  0.024 ms |       0.015 ms | 0.002 ms | 0.002 ms |
+| `mixed-medium` |  0.362 ms |       0.348 ms | 0.002 ms | 0.002 ms |
+| `paths-large`  |  0.515 ms |       0.503 ms | 0.002 ms | 0.003 ms |
 
 The separately timed normal public path remains faster than the
-instrumented path. One validation run over 3,010 mixed queries had a
-1.300 ms production median. Paired measurements, rather than these
-absolute figures, should remain the acceptance signal once FIR is
-available.
+instrumented path. The production medians in the same acceptance run
+were 0.044 ms, 0.307 ms, and 0.586 ms respectively. Paired
+measurements, rather than these absolute figures, remain the
+acceptance signal.
 
 ## What the classes reveal
 
-The mixed workload's boundary probes had a 4.969 ms median and its
-numeric-edge probes had a 3.319 ms median, compared with 1.927 ms for
-the regular grid. In the large path scene, misses took 30.765 ms while
-tagged hits took 12.697 ms.
+An earlier pre-bounds diagnostic found a 4.969 ms median for the mixed
+workload's boundary probes and 3.319 ms for numeric-edge probes,
+compared with 1.927 ms for the regular grid. In the old large path
+scene, misses took 30.765 ms while tagged hits took 12.697 ms.
 
 This is consistent with front-to-back short-circuiting: an early tag
 can stop, while a miss traverses the complete linear composition tree
@@ -190,24 +184,26 @@ to 4,532 bytes and the path tier from 44,610 to 50,730 bytes. The VIR
 package grows from 21,647 to 22,074 bytes. The bounds-only fixture and
 VIR runtime Wasm are unchanged.
 
-The existing FIR package is intentionally rejected for this new
-layout. Its first observed mismatch was `mixed-medium/grid-8-5`:
-expected labeled tag `back`, received untagged `something`. This is a
+The old FIR package remains intentionally rejected for this layout.
+Its first observed mismatch was `mixed-medium/grid-8-5`: expected
+labeled tag `back`, received untagged `something`. This was a
 type-layout incompatibility, not an adapter optimization opportunity.
-The browser API can remain v1, while the required input layout becomes
-`lean-4.32-Illuminate.HitScene/v2`. FIR must regenerate from the new
-Lean sources before a new FIR/VIR ratio is reported.
+The accepted package keeps browser API
+`fir.illuminate-hit-scene.browser/v1` while advancing the input layout
+to `lean-4.32-Illuminate.HitScene/v2`. The regenerated package now
+matches all 1,009 tier-suite queries.
 
 ## Conclusions and next actions
 
 1. Keep the current retained typed-object boundary. It has removed the
    scene from the hot path and is not the dominant cost.
-2. Treat FIR as the compiled semantic control. The widening 5.4× to
-   19.1× tier speedup attributes most of VIR's geometry scaling to
-   interpreter execution rather than its retained boundary.
-3. Keep the accepted conservative prepared-path bounds. After FIR v2
-   validates the same effect, consider bounds on composed subtrees or
-   a small spatial index so obvious misses do not walk every path.
+2. Treat FIR as the compiled semantic control. Its 7.2× to 20.6× tier
+   speedup attributes most remaining geometry cost to VIR interpreter
+   execution rather than its retained boundary.
+3. Keep the accepted conservative prepared-path bounds. FIR v2 now
+   validates the representation and semantics; next consider bounds on
+   composed subtrees or a small spatial index so obvious misses do not
+   walk every path.
 4. Re-run the result-class breakdown after each algorithmic change;
    full-scene misses are the most sensitive regression signal.
 5. Preserve the 301-query semantic differential and 10,000-query 4 MiB
@@ -225,13 +221,13 @@ workaround is needed for resource ownership after VIR PR #103.
 
 ## Repeatable FIR v2 acceptance
 
-The Illuminate consumer is prepared for the regenerated FIR package.
-`npm run accept:fir-hit-scene`, with `ILLUMINATE_FIR_HIT_SCENE_DIR`
-naming an immutable package, validates the pinned source revision,
-source and fixture hashes, v2 input layout, zero imports, exact Wasm
-exports, module-owned memory, adapter phases, resident checkpoint
-behavior, disposal, and all 1,009 distinct oracle queries. Any
-admission or differential failure stops before recording a result.
+The Illuminate consumer accepted the regenerated FIR v2 package with
+`npm run accept:fir-hit-scene`. With `ILLUMINATE_FIR_HIT_SCENE_DIR`
+naming an immutable package, the command validates the pinned source
+revision, source and fixture hashes, v2 input layout, zero imports,
+exact Wasm exports, module-owned memory, adapter phases, resident
+checkpoint behavior, disposal, and all 1,009 distinct oracle queries.
+Any admission or differential failure stops before recording a result.
 
 Successful suite runs append a compact JSONL record to
 `test_output/hit-scene-performance-history.jsonl`. Each record retains
