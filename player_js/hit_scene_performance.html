@@ -209,25 +209,48 @@
                 border-radius: 10px;
                 background: #0a1428;
             }
-            .probe-chart header {
+            .probe-chart > header {
                 display: flex;
                 gap: 12px;
                 align-items: baseline;
                 justify-content: space-between;
                 margin-bottom: 12px;
             }
-            .probe-chart header strong {
+            .probe-chart > header strong {
                 color: #dce6ff;
                 font-size: 12px;
             }
-            .probe-chart header small {
+            .probe-chart > header small {
                 color: #7183a7;
                 font-size: 9px;
                 text-align: right;
             }
             .probe-chart-rows {
                 display: grid;
-                gap: 10px;
+                gap: 14px;
+            }
+            .probe-chart-group {
+                display: grid;
+                gap: 8px;
+            }
+            .probe-chart-group + .probe-chart-group {
+                padding-top: 13px;
+                border-top: 1px solid #223658;
+            }
+            .probe-chart-group-heading {
+                display: grid;
+                gap: 2px;
+                margin-bottom: 1px;
+            }
+            .probe-chart-group-heading strong {
+                color: #d6e1fa;
+                font-size: 9px;
+                letter-spacing: 0.035em;
+                text-transform: uppercase;
+            }
+            .probe-chart-group-heading small {
+                color: #65789e;
+                font-size: 8px;
             }
             .probe-chart-row {
                 display: grid;
@@ -284,6 +307,15 @@
                 background: #f6d372;
                 box-shadow: 0 0 4px #f6d372;
                 transition: left 180ms ease;
+            }
+            .probe-chart-tail {
+                overflow: hidden;
+                color: #687ca1;
+                font:
+                    8px ui-monospace,
+                    monospace;
+                text-overflow: ellipsis;
+                white-space: nowrap;
             }
             .probe-chart-note {
                 display: block;
@@ -773,6 +805,8 @@
                     Pointer and automatic coordinates are sent to the same retained scene through
                     reference VIR, spatial VIR, and FIR. Geometry is a host-side visualization of
                     the Lean-generated fixture; every displayed hit result comes from the backend.
+                    The upper chart holds the reference algorithm fixed to compare VIR with FIR; the
+                    lower chart holds VIR fixed to compare reference and spatial algorithms.
                 </p>
                 <div class="probe-controls">
                     <button type="button" data-probe-toggle data-state="stopped">
@@ -794,7 +828,7 @@
                     <div class="probe-inspector">
                         <section class="probe-chart" data-probe-chart data-state="idle">
                             <header>
-                                <strong>Rolling median callback</strong>
+                                <strong>Paired callback batches</strong>
                                 <small>shared zero scale · gold mark = Reference VIR</small>
                             </header>
                             <div class="probe-chart-rows" data-probe-chart-rows></div>

@@ -3741,9 +3741,7 @@ var MAX_UINT643 = 0xffffffffffffffffn;
 var OBJECT_CALL_UNAVAILABLE = /* @__PURE__ */ Symbol("object-call-unavailable");
 function normalizePackageSetBytes(packages) {
   if (!Array.isArray(packages) || packages.length === 0) {
-    throw new TypeError(
-      "IR package set must be a non-empty array ordered dependencies first, root last"
-    );
+    throw new TypeError("IR package set must be a non-empty array ordered dependencies first, root last");
   }
   return packages.map((bytes, index) => asBytes(bytes, `IR package-set member ${index + 1}`));
 }
@@ -3983,9 +3981,7 @@ var VirRuntime = class extends ObjectValueRuntime {
     this.requireLiveRuntime();
     this.requireFunction("vir_resolve_call_export");
     if (args.length !== entry.args.length) {
-      throw new Error(
-        `${entry.entry} expects ${entry.args.length} arguments, got ${args.length}`
-      );
+      throw new Error(`${entry.entry} expects ${entry.args.length} arguments, got ${args.length}`);
     }
     const cache = this.callCacheFor(entry);
     const objectResult = this.tryObjectResolvedCall(entry, args, cache, timing);
@@ -4008,24 +4004,12 @@ var VirRuntime = class extends ObjectValueRuntime {
       try {
         for (let index = 0; index < plan.args.length; index++) {
           const arg = plan.args[index];
-          argObjs.push(
-            this.makeObjectValue(
-              arg.type,
-              args[index],
-              `${entry.entry} argument ${arg.name}`
-            )
-          );
+          argObjs.push(this.makeObjectValue(arg.type, args[index], `${entry.entry} argument ${arg.name}`));
         }
       } finally {
         if (timing !== null) timing.endMarshal(marshalStarted);
       }
-      return this.callResolvedObjects(
-        entry,
-        cache,
-        argObjs,
-        (resultObj) => this.liftOwnedObjectValue(plan.resultType, resultObj, `${entry.entry} result`),
-        timing
-      );
+      return this.callResolvedObjects(entry, cache, argObjs, (resultObj) => this.liftOwnedObjectValue(plan.resultType, resultObj, `${entry.entry} result`), timing);
     } finally {
       this.releaseOwnedObjects(argObjs);
     }
@@ -4161,13 +4145,7 @@ var VirRuntime = class extends ObjectValueRuntime {
       const marshalStarted = timing?.beginPhase();
       try {
         fnArgs.forEach((arg, index) => {
-          argObjs.push(
-            this.makeObjectValue(
-              arg.type,
-              args[index],
-              `callback argument ${arg.name}`
-            )
-          );
+          argObjs.push(this.makeObjectValue(arg.type, args[index], `callback argument ${arg.name}`));
         });
       } finally {
         if (timing !== null) timing.endMarshal(marshalStarted);
@@ -4186,10 +4164,7 @@ var VirRuntime = class extends ObjectValueRuntime {
       if (argObjs.length !== 0) {
         const marshalStarted = timing?.beginPhase();
         try {
-          argvPtr = this.allocByteLength(
-            argObjs.length * 4,
-            "callback argv pointer array"
-          );
+          argvPtr = this.allocByteLength(argObjs.length * 4, "callback argv pointer array");
           this.writePointerArray(argvPtr, argObjs);
         } finally {
           if (timing !== null) timing.endMarshal(marshalStarted);
@@ -4201,11 +4176,7 @@ var VirRuntime = class extends ObjectValueRuntime {
         this.hostState?.beginCallTiming(timing);
         const executeStarted = timing.beginPhase();
         try {
-          resultObj = this.exports.vir_closure_call_objects(
-            rootId,
-            argvPtr,
-            argObjs.length
-          );
+          resultObj = this.exports.vir_closure_call_objects(rootId, argvPtr, argObjs.length);
         } finally {
           try {
             timing.endExecute(executeStarted);
@@ -4223,11 +4194,7 @@ var VirRuntime = class extends ObjectValueRuntime {
       if (resultObj === 0) {
         throw new Error(this.lastClosureCallError() || "closure call failed");
       }
-      return this.liftOwnedObjectValue(
-        requireFunctionResult(type, "callback"),
-        resultObj,
-        "callback result"
-      );
+      return this.liftOwnedObjectValue(requireFunctionResult(type, "callback"), resultObj, "callback result");
     } catch (error) {
       if (decodeStarted === void 0) {
         const hostError = this.hostState?.takeCallError();
@@ -5182,8 +5149,12 @@ function detachBrowserRenderTeardownTicket(ticket) {
   ticket.active = false;
   const state = ticket.state;
   const resources = ticket.resources;
+  const ownerSet = ticket.ownerSet;
   ticket.state = null;
   ticket.resources = null;
+  ticket.ownerSet = null;
+  ticket.ownershipKey = null;
+  ownerSet?.delete(ticket);
   resources?.removeDisposable(ticket);
   return state;
 }
@@ -5198,18 +5169,21 @@ function releaseBrowserRenderState(state, fromFinalizer = false) {
   const reducers = Array.from(state.reducers.values());
   const effects = Array.from(state.effects.values(), (record) => record.effect);
   const payloadLeases = Array.from(state.payloadLeases);
+  const abortOwnership = state.abortOwnership;
   state.reducers.clear();
   state.effects.clear();
   state.candidates.clear();
   state.refs.clear();
   state.setters.clear();
   state.payloadLeases.clear();
+  state.abortOwnership = null;
   const errors = [];
   for (const reducer of reducers) collectCleanupError(errors, () => releaseLeanCallback(reducer));
   for (const effect of effects) collectCleanupError(errors, () => releaseBrowserEffect(effect));
   for (const lease of payloadLeases) {
     collectCleanupError(errors, () => releaseBrowserPayloadLease(lease));
   }
+  collectCleanupError(errors, () => abortOwnership?.());
   if (errors.length !== 0) {
     if (!fromFinalizer) throwCollectedErrors(errors, "browser React render ownership cleanup failed");
     reportReactFinalizerErrors(

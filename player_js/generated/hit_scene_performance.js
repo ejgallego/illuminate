@@ -1235,6 +1235,8 @@ function renderSpatialPerformance(report) {
   panel.hidden = false;
 }
 var svgNamespace = "http://www.w3.org/2000/svg";
+var hitProbeBatchSize = 16;
+var hitProbeWindowSize = 120;
 function svgElement(name, attributes = {}) {
   const node = document.createElementNS(svgNamespace, name);
   for (const [key, value] of Object.entries(attributes)) {
@@ -1395,6 +1397,15 @@ function rollingMedian(samples) {
   const sorted = [...samples].sort((left, right) => left - right);
   return sorted[Math.floor(sorted.length / 2)] ?? 0;
 }
+function rollingPercentile(samples, quantile) {
+  const sorted = [...samples].sort((left, right) => left - right);
+  if (sorted.length === 0) return 0;
+  return sorted[Math.ceil((sorted.length - 1) * quantile)] ?? 0;
+}
+function pushRolling(samples, value) {
+  samples.push(value);
+  if (samples.length > hitProbeWindowSize) samples.shift();
+}
 async function createHitProbeSession() {
   const { fetchHitSceneBenchmarkSuite: fetchHitSceneBenchmarkSuite2 } = await Promise.resolve().then(() => (init_hit_scene_benchmark(), hit_scene_benchmark_exports));
   const suite = await fetchHitSceneBenchmarkSuite2("./hit-scene-benchmark-suite.json");
@@ -1435,7 +1446,9 @@ async function createHitProbeSession() {
       mounted = candidates.map((candidate) => ({
         candidate,
         host: candidate.create(fixture),
-        samples: []
+        samples: [],
+        ratioSamples: [],
+        deltaSamples: []
       }));
       queryNumber = 0;
     },
@@ -1446,16 +1459,20 @@ async function createHitProbeSession() {
       queryNumber += 1;
       const observations = order.map((item) => {
         const started = now();
-        const result = item.host.query(x, y);
-        const duration = now() - started;
-        item.samples.push(duration);
-        if (item.samples.length > 120) item.samples.shift();
+        let result;
+        for (let index = 0; index < hitProbeBatchSize; index += 1) {
+          result = item.host.query(x, y);
+        }
+        const duration = (now() - started) / hitProbeBatchSize;
+        pushRolling(item.samples, duration);
         return {
+          item,
           name: item.candidate.name,
           label: item.candidate.label,
           result,
           duration,
           median: rollingMedian(item.samples),
+          p95: rollingPercentile(item.samples, 0.95),
           count: item.samples.length
         };
       });
@@ -1467,7 +1484,26 @@ async function createHitProbeSession() {
           );
         }
       }
-      return observations;
+      const reference2 = observations.find((observation) => observation.name === "vir");
+      if (reference2 === void 0) throw new Error("live HitScene reference VIR is missing");
+      return observations.map((observation) => {
+        const ratio2 = reference2.duration > 0 ? observation.duration / reference2.duration : 1;
+        const delta = observation.duration - reference2.duration;
+        pushRolling(observation.item.ratioSamples, ratio2);
+        pushRolling(observation.item.deltaSamples, delta);
+        return {
+          name: observation.name,
+          label: observation.label,
+          result: observation.result,
+          duration: observation.duration,
+          median: observation.median,
+          p95: observation.p95,
+          count: observation.count,
+          ratioMedian: rollingMedian(observation.item.ratioSamples),
+          ratioP95: rollingPercentile(observation.item.ratioSamples, 0.95),
+          deltaMedian: rollingMedian(observation.item.deltaSamples)
+        };
+      });
     },
     dispose() {
       unmount();
@@ -1519,7 +1555,8 @@ function installHitProbe() {
   function renderBackends() {
     backendList.replaceChildren();
     chartRows.replaceChildren();
-    for (const candidate of session?.candidates ?? []) {
+    const candidates = session?.candidates ?? [];
+    for (const candidate of candidates) {
       const card = element("article", `probe-backend ${candidate.name}`);
       card.dataset.probeBackend = candidate.name;
       card.append(
@@ -1528,43 +1565,82 @@ function installHitProbe() {
         element("small", "probe-timing", "\u2014")
       );
       backendList.append(card);
-      const row = element("div", `probe-chart-row ${candidate.name}`);
-      row.dataset.probeChartBackend = candidate.name;
-      const label = element("div", "probe-chart-label");
-      label.append(element("span", "", candidate.label), element("output", "", "warming\u2026"));
-      const track = element("div", "probe-chart-track");
-      track.append(element("i", ""), element("b", ""));
-      row.append(label, track);
-      chartRows.append(row);
+    }
+    for (const groupSpec of [
+      {
+        id: "runtime",
+        title: "Runtime boundary \xB7 reference algorithm",
+        detail: "VIR interpreter versus FIR native Wasm",
+        names: ["vir", "fir"]
+      },
+      {
+        id: "algorithm",
+        title: "Algorithm \xB7 VIR interpreter",
+        detail: "reference tree versus spatial tree",
+        names: ["vir", "spatial"]
+      }
+    ]) {
+      const group = element("section", "probe-chart-group");
+      group.dataset.probeChartGroup = groupSpec.id;
+      const heading = element("header", "probe-chart-group-heading");
+      heading.append(
+        element("strong", "", groupSpec.title),
+        element("small", "", groupSpec.detail)
+      );
+      group.append(heading);
+      for (const name of groupSpec.names) {
+        const candidate = candidates.find((item) => item.name === name);
+        if (candidate === void 0) continue;
+        const row = element("div", `probe-chart-row ${candidate.name}`);
+        row.dataset.probeChartBackend = candidate.name;
+        row.dataset.probeChartComparison = groupSpec.id;
+        const label = element("div", "probe-chart-label");
+        label.append(
+          element("span", "", candidate.label),
+          element("output", "", "warming\u2026")
+        );
+        const track = element("div", "probe-chart-track");
+        track.append(element("i", ""), element("b", ""));
+        row.append(label, track, element("small", "probe-chart-tail", "p95 warming\u2026"));
+        group.append(row);
+      }
+      chartRows.append(group);
     }
     chart.dataset.state = "warming";
-    chartNote.textContent = "Warming the rolling window; all bars share one zero-based time scale.";
+    chartNote.textContent = `${hitProbeBatchSize}-query paired batches are warming; all bars share one zero-based scale.`;
   }
   function renderLiveComparison(observations) {
     const reference = observations.find((observation) => observation.name === "vir");
     if (reference === void 0) return;
     const maximum = Math.max(0, ...observations.map((observation) => observation.median));
     const scale = maximum > 0 ? maximum : 1;
-    const referencePosition = Math.min(100, 100 * reference.median / scale);
+    const referencePosition = Math.min(99.5, 100 * reference.median / scale);
     const minimumSamples = Math.min(...observations.map((observation) => observation.count));
     for (const observation of observations) {
-      const row = chartRows.querySelector(`[data-probe-chart-backend="${observation.name}"]`);
-      if (!(row instanceof HTMLElement)) continue;
-      const fill = row.querySelector(".probe-chart-track i");
-      const marker = row.querySelector(".probe-chart-track b");
-      const output = row.querySelector("output");
-      if (fill instanceof HTMLElement) {
-        fill.style.width = `${Math.max(1, 100 * observation.median / scale)}%`;
-      }
-      if (marker instanceof HTMLElement) marker.style.left = `${referencePosition}%`;
-      if (output) {
-        const ratio2 = reference.median > 0 ? observation.median / reference.median : null;
-        output.textContent = `${(observation.median * 1e3).toFixed(1)} \xB5s \xB7 ` + (ratio2 === null ? "\u2014" : `${ratio2.toFixed(2)}\xD7 VIR`);
+      const rows = chartRows.querySelectorAll(
+        `[data-probe-chart-backend="${observation.name}"]`
+      );
+      for (const row of rows) {
+        const fill = row.querySelector(".probe-chart-track i");
+        const marker = row.querySelector(".probe-chart-track b");
+        const output = row.querySelector("output");
+        const tail = row.querySelector(".probe-chart-tail");
+        if (fill instanceof HTMLElement) {
+          fill.style.width = `${Math.max(1, 100 * observation.median / scale)}%`;
+        }
+        if (marker instanceof HTMLElement) marker.style.left = `${referencePosition}%`;
+        if (output) {
+          output.textContent = `${(observation.median * 1e3).toFixed(1)} \xB5s \xB7 ${observation.ratioMedian.toFixed(2)}\xD7 VIR`;
+        }
+        if (tail) {
+          const delta = observation.deltaMedian * 1e3;
+          tail.textContent = `p95 ${(observation.p95 * 1e3).toFixed(1)} \xB5s \xB7 paired \u0394 ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} \xB5s \xB7 ratio p95 ${observation.ratioP95.toFixed(2)}\xD7`;
+        }
       }
     }
     const stable = minimumSamples >= 30;
     chart.dataset.state = stable ? "stable" : "warming";
-    chartNote.textContent = stable ? `${minimumSamples} matched samples in the current window; shorter bars are faster.` : `Warming: ${minimumSamples}/30 matched samples before the comparison settles.`;
+    chartNote.textContent = stable ? `${minimumSamples} matched ${hitProbeBatchSize}-query batches; ratios and deltas are paired by coordinate.` : `Warming: ${minimumSamples}/30 matched batches before the comparison settles.`;
   }
   function chooseFixture() {
     const fixture = selectedFixture();
@@ -1588,7 +1664,7 @@ function installHitProbe() {
       const timing = card.querySelector(".probe-timing");
       if (resultOutput) resultOutput.textContent = hitResultLabel(observation.result);
       if (timing) {
-        timing.textContent = `${milliseconds(observation.duration)} last \xB7 ${milliseconds(observation.median)} rolling median \xB7 ${observation.count} samples`;
+        timing.textContent = `${milliseconds(observation.duration)} last batch mean \xB7 ${milliseconds(observation.median)} rolling median \xB7 ${milliseconds(observation.p95)} p95 \xB7 ${observation.count} batches`;
       }
     }
     renderLiveComparison(observations);

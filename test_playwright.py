@@ -1203,10 +1203,12 @@ def test_hit_scene_live_probe(page):
     )
     expected_backends = 3 if (ROOT / "test_output" / "fir-hit-scene" / "BUILD.json").exists() else 2
     assert page.locator("[data-probe-backend]").count() == expected_backends
-    assert page.locator("[data-probe-chart-backend]").count() == expected_backends
+    assert page.locator("[data-probe-chart-group]").count() == 2
+    assert page.locator("[data-probe-chart-backend]").count() == expected_backends + 1
     page.wait_for_function(
         "() => [...document.querySelectorAll('.probe-timing')].every(node => "
-        "node.textContent.includes('samples') && !node.textContent.startsWith('—'))",
+        "node.textContent.includes('batches') && node.textContent.includes('p95') && "
+        "!node.textContent.startsWith('—'))",
         timeout=20_000,
     )
     page.wait_for_function(
@@ -1214,9 +1216,17 @@ def test_hit_scene_live_probe(page):
         ".every(node => node.textContent.includes('× VIR'))",
         timeout=20_000,
     )
+    page.wait_for_function(
+        "document.querySelector('[data-probe-chart]').dataset.state === 'stable'",
+        timeout=20_000,
+    )
     assert "1.00× VIR" in page.locator(
         '[data-probe-chart-backend="vir"] output'
-    ).inner_text()
+    ).first.inner_text()
+    assert all(
+        "paired Δ" in text and "ratio p95" in text
+        for text in page.locator(".probe-chart-tail").all_inner_texts()
+    )
     assert all(
         float(width.removesuffix("%")) > 0
         for width in page.locator(".probe-chart-track i").evaluate_all(
