@@ -93,7 +93,7 @@ def mapStrokeHitArray (x y : Float) : RuntimeM Nat := do
 @[vir_export]
 def pathFill (handle : PathHandle) (x y : Float) : RuntimeM HitSceneResult := do
   let path ← LeanRef.fromJSL handle
-  pure <| match (HitPrimitive.path path true 0).hitTest (Point.mk x y) with
+  pure <| match (HitPrimitive.path path true 0 x x y y).hitTest (Point.mk x y) with
     | .nothing => .nothing
     | .something => .something
     | .tag value => .tag value ""
@@ -114,7 +114,7 @@ def pathFillEastResults (handle : PathHandle) (x y : Float) : RuntimeM (Array Fl
 @[vir_export]
 def pathStroke (handle : PathHandle) (x y : Float) : RuntimeM HitSceneResult := do
   let path ← LeanRef.fromJSL handle
-  pure <| match (HitPrimitive.path path false 1).hitTest (Point.mk x y) with
+  pure <| match (HitPrimitive.path path false 1 x x y y).hitTest (Point.mk x y) with
     | .nothing => .nothing
     | .something => .something
     | .tag value => .tag value ""

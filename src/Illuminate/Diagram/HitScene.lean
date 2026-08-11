@@ -157,11 +157,15 @@ private def pathFromJson (json : Lean.Json) : Except String PathData := do
   pure { commands := ← commands.mapM commandFromJson }
 
 private def primitiveToJson : HitPrimitive → Lean.Json
-  | .path data hasFill strokeWidth => .mkObj [
+  | .path data hasFill strokeWidth left right bottom top => .mkObj [
       ("kind", "path"),
       ("data", pathToJson data),
       ("hasFill", toJson hasFill),
-      ("strokeWidth", toJson strokeWidth)]
+      ("strokeWidth", toJson strokeWidth),
+      ("left", toJson left),
+      ("right", toJson right),
+      ("bottom", toJson bottom),
+      ("top", toJson top)]
   | .bounds left right bottom top => .mkObj [
       ("kind", "bounds"),
       ("left", toJson left),
@@ -175,7 +179,11 @@ private def primitiveFromJson (json : Lean.Json) : Except String HitPrimitive :=
   | "path" => pure (.path
       (← pathFromJson (← json.getObjVal? "data"))
       (← jsonField json "hasFill")
-      (← jsonField json "strokeWidth"))
+      (← jsonField json "strokeWidth")
+      (← jsonField json "left")
+      (← jsonField json "right")
+      (← jsonField json "bottom")
+      (← jsonField json "top"))
   | "bounds" => pure (.bounds
       (← jsonField json "left")
       (← jsonField json "right")

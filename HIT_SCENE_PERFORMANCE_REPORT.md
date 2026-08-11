@@ -149,6 +149,55 @@ than 99% of observed wall time in the Lean execution phase. Marshal
 and decode stay in the tens of microseconds even for the 44 KB
 retained scene because only two binary64 coordinates cross per query.
 
+## Prepared-path bounds experiment
+
+The accepted Illuminate candidate stores four conservative scalar
+bounds on each prepared path. Bounds are computed once before browser
+mounting. Fill queries skip ray casting only when the point is above,
+below, or to the right of the path; points to the left still run the
+eastward parity ray to preserve its observable numerical behavior.
+Stroke queries use all four sides before constructing and querying the
+eight-direction `StrokeTrace`.
+
+An initial exact-extrema box was rejected. It changed two established
+oracle results because the cubic root and parity implementation can
+report hits inside the Bézier control hull but outside mathematical
+curve extrema, and can retain odd parity for points left of a path.
+The accepted box therefore contains cubic control points and the full
+rotated ellipse used by the arc solver. The old and new VIR packages
+matched every query in the tier suite after this adjustment.
+
+The acceptance comparison loaded the old and new VIR packages into the
+same Node process, used one warm-up and four measured rounds, rotated
+backend order, disabled diagnostic timing, and retained every sample.
+The two packages received their corresponding old and new
+prepared-path representations; coordinates and semantic oracle results
+were identical.
+
+| Workload       | Old VIR median | Bounded VIR median | Median speedup |   Old p95 | Bounded p95 |
+| -------------- | -------------: | -----------------: | -------------: | --------: | ----------: |
+| `bounds-small` |       0.025 ms |           0.025 ms |          0.99× |  0.088 ms |    0.076 ms |
+| `mixed-medium` |       0.930 ms |           0.272 ms |          3.42× |  4.575 ms |    2.194 ms |
+| `paths-large`  |      21.586 ms |           0.993 ms |         21.74× | 51.378 ms |    5.334 ms |
+
+The path-heavy mean fell from 23.699 ms to 1.514 ms. A separate
+diagnostic run attributed 0.514 ms of a 0.532 ms instrumented path
+median to Lean execution, confirming that marshal and decode remain
+secondary after the original path traversal bucket shrank.
+
+The tradeoff is a larger cold scene: mixed encoding grows from 4,088
+to 4,532 bytes and the path tier from 44,610 to 50,730 bytes. The VIR
+package grows from 21,647 to 22,074 bytes. The bounds-only fixture and
+VIR runtime Wasm are unchanged.
+
+The existing FIR package is intentionally rejected for this new
+layout. Its first observed mismatch was `mixed-medium/grid-8-5`:
+expected labeled tag `back`, received untagged `something`. This is a
+type-layout incompatibility, not an adapter optimization opportunity.
+The browser API can remain v1, while the required input layout becomes
+`lean-4.32-Illuminate.HitScene/v2`. FIR must regenerate from the new
+Lean sources before a new FIR/VIR ratio is reported.
+
 ## Conclusions and next actions
 
 1. Keep the current retained typed-object boundary. It has removed the
@@ -156,9 +205,9 @@ retained scene because only two binary64 coordinates cross per query.
 2. Treat FIR as the compiled semantic control. The widening 5.4× to
    19.1× tier speedup attributes most of VIR's geometry scaling to
    interpreter execution rather than its retained boundary.
-3. Add a cheap prepared bounding box before expensive path fill and
-   stroke tests. Then consider bounds on composed subtrees or a small
-   spatial index so obvious misses do not walk every path.
+3. Keep the accepted conservative prepared-path bounds. After FIR v2
+   validates the same effect, consider bounds on composed subtrees or
+   a small spatial index so obvious misses do not walk every path.
 4. Re-run the result-class breakdown after each algorithmic change;
    full-scene misses are the most sensitive regression signal.
 5. Preserve the 301-query semantic differential and 10,000-query 4 MiB

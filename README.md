@@ -634,6 +634,12 @@ npm run profile:vir-hit-scene
 npm run stage:hit-scene-performance
 ```
 
+Prepared paths retain conservative bounds so misses can avoid fill ray
+casting and stroke tracing without changing the reference's numerical
+parity behavior. This representation is the FIR input layout
+`lean-4.32-Illuminate.HitScene/v2`; use `--vir-only` for local
+measurements when no matching FIR package is staged.
+
 The protocol, current numbers, and resulting optimization priorities
 are recorded in
 [HIT_SCENE_PERFORMANCE_REPORT.md](HIT_SCENE_PERFORMANCE_REPORT.md).

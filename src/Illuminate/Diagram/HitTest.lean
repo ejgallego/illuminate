@@ -46,6 +46,52 @@ def contains (pd : PathData) (p : Point) : Bool :=
   let hits := (Trace.ofPathData pd.commands).query p Vec2.east
   hits.size % 2 == 1
 
+private def extendHitBounds (bounds : Option (Vec2 × Vec2)) (point : Vec2) :
+    Option (Vec2 × Vec2) :=
+  match bounds with
+  | none => some (point, point)
+  | some (lower, upper) => some (
+      Vec2.mk (Min.min lower.x point.x) (Min.min lower.y point.y),
+      Vec2.mk (Max.max upper.x point.x) (Max.max upper.y point.y))
+
+/--
+Computes bounds conservative for the numerical algorithms used by hit testing.
+
+Cubic control points are retained because the root solver can accept points in
+the control hull just outside the curve's mathematical extrema. Arcs use the
+complete rotated ellipse around the center used by the ray solver.
+-/
+private def hitTestBounds (pd : PathData) : Vec2 × Vec2 :=
+  let (bounds, _, _) := pd.commands.foldl
+      (init := (none, Vec2.mk 0 0, Vec2.mk 0 0)) fun (bounds, current, start) command =>
+    match command with
+    | .moveTo point => (extendHitBounds bounds point, point, point)
+    | .lineTo point =>
+      (extendHitBounds (extendHitBounds bounds current) point, point, start)
+    | .curveTo control1 control2 endpoint =>
+      let bounds := extendHitBounds bounds current
+      let bounds := extendHitBounds bounds control1
+      let bounds := extendHitBounds bounds control2
+      (extendHitBounds bounds endpoint, endpoint, start)
+    | .arcTo rx ry rotation largeArc sweep endpoint =>
+      let center := endpointToCenter current.x current.y rx ry rotation
+        largeArc sweep endpoint.x endpoint.y
+      let cosRotation := Float.cos rotation
+      let sinRotation := Float.sin rotation
+      let horizontalRadius :=
+        ((rx * cosRotation) ^ 2 + (ry * sinRotation) ^ 2).sqrt
+      let verticalRadius :=
+        ((rx * sinRotation) ^ 2 + (ry * cosRotation) ^ 2).sqrt
+      let lower := Vec2.mk (center.cx - horizontalRadius) (center.cy - verticalRadius)
+      let upper := Vec2.mk (center.cx + horizontalRadius) (center.cy + verticalRadius)
+      let bounds := extendHitBounds bounds current
+      let bounds := extendHitBounds bounds endpoint
+      let bounds := extendHitBounds bounds lower
+      (extendHitBounds bounds upper, endpoint, start)
+    | .closePath =>
+      (extendHitBounds (extendHitBounds bounds current) start, start, start)
+  bounds.getD (Vec2.mk 0 0, Vec2.mk 0 0)
+
 end PathData
 
 /-!
@@ -75,8 +121,9 @@ private def pointOnStroke (pd : PathData) (strokeWidth : Float) (p : Point) : Bo
 
 /-- Geometry retained from one primitive for browser-resident hit testing. -/
 inductive HitPrimitive where
-  /-- Tests a path's fill and visible stroke. -/
+  /-- Tests a path's fill and visible stroke after rejecting points outside its prepared bounds. -/
   | path (data : PathData) (hasFill : Bool) (strokeWidth : Float)
+      (left right bottom top : Float)
   /-- Tests an axis-aligned primitive bound. -/
   | bounds (left right bottom top : Float)
 deriving Repr, BEq, Inhabited
@@ -86,9 +133,16 @@ namespace HitPrimitive
 /-- Tests prepared primitive geometry at a point in the primitive's local coordinates. -/
 def hitTest (primitive : HitPrimitive) (p : Point) : Click :=
   match primitive with
-  | .path data hasFill strokeWidth =>
-    let fillHit := hasFill && data.contains p
-    let strokeHit := pointOnStroke data strokeWidth p
+  | .path data hasFill strokeWidth left right bottom top =>
+    -- Fill uses an eastward parity ray, so points left of the geometry must
+    -- still run the reference algorithm. Its numerical root handling can
+    -- produce observable odd parity there. Stroke casts in every direction
+    -- and can use the complete prepared box.
+    let fillCouldHit := hasFill && p.x <= right && p.y >= bottom && p.y <= top
+    let strokeCouldHit := strokeWidth > 0 &&
+      p.x >= left && p.x <= right && p.y >= bottom && p.y <= top
+    let fillHit := fillCouldHit && data.contains p
+    let strokeHit := strokeCouldHit && pointOnStroke data strokeWidth p
     if fillHit || strokeHit then .something else .nothing
   | .bounds left right bottom top =>
     if p.x >= left && p.x <= right && p.y >= bottom && p.y <= top then .something
@@ -106,7 +160,13 @@ def prepareHit : CorePrimitive → HitPrimitive
       | _ => true
     let strokeWidth :=
       if stroke.width > 0 && stroke.color.a > 0 then stroke.width else 0
+    let (lower, upper) := data.hitTestBounds
+    -- The exact geometry bounds are expanded by the visible stroke radius. A
+    -- small guard preserves boundary hits across floating-point extrema math.
+    let margin := strokeWidth / 2 + 1e-6
     .path data hasFill strokeWidth
+      (lower.x - margin) (upper.x + margin)
+      (lower.y - margin) (upper.y + margin)
   | .text contents style =>
     let fontSize := style.fontSize
     let lines := contents.splitOn "\n"

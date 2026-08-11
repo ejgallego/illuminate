@@ -199,6 +199,9 @@ async function loadFirCandidate() {
     const build = await requireOk(buildResponse, "FIR BUILD.json").then((response) =>
         response.json(),
     );
+    if (build.capabilities?.inputLayout?.version !== "lean-4.32-Illuminate.HitScene/v2") {
+        return null;
+    }
     const adapterUrl = new URL(
         "./fir-hit-scene/illuminate-hit-scene-browser-adapter.mjs",
         location.href,

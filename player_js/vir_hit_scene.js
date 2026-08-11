@@ -98,15 +98,34 @@ function projectPath(source) {
 function projectPrimitive(source) {
     const { object, kind } = requireKind(source, "hit-scene primitive");
     switch (kind) {
-        case "path":
+        case "path": {
+            const fields = {
+                data: projectPath(object.data),
+                hasFill: object.hasFill,
+                strokeWidth: object.strokeWidth,
+            };
+            const boundNames = ["left", "right", "bottom", "top"];
+            const presentBounds = boundNames.filter((name) => Object.hasOwn(object, name));
+            if (presentBounds.length !== 0 && presentBounds.length !== boundNames.length) {
+                throw new Error("hit-scene path has incomplete prepared bounds");
+            }
+            if (presentBounds.length === boundNames.length) {
+                return {
+                    kind,
+                    fields: {
+                        ...fields,
+                        left: object.left,
+                        right: object.right,
+                        bottom: object.bottom,
+                        top: object.top,
+                    },
+                };
+            }
             return {
                 kind,
-                fields: {
-                    data: projectPath(object.data),
-                    hasFill: object.hasFill,
-                    strokeWidth: object.strokeWidth,
-                },
+                fields,
             };
+        }
         case "bounds":
             return {
                 kind,

@@ -16,6 +16,7 @@ import { createVirRuntime } from "../test_output/vir/sdk/js/vir-runtime-node.js"
 
 const quick = process.argv.includes("--quick");
 const requireFir = process.argv.includes("--require-fir");
+const virOnly = process.argv.includes("--vir-only");
 const suiteMode = process.argv.includes("--suite");
 const outputArgument = process.argv.find((argument) => argument.startsWith("--output="));
 const outputPath =
@@ -166,6 +167,11 @@ async function loadFir() {
         build.capabilities?.browserAdapter?.apiVersion,
         "fir.illuminate-hit-scene.browser/v1",
     );
+    assert.equal(
+        build.capabilities?.inputLayout?.version,
+        "lean-4.32-Illuminate.HitScene/v2",
+        "staged FIR HitScene package uses an obsolete prepared-path layout; use --vir-only until v2 is staged",
+    );
     const adapter = await adapterModule.createIlluminateHitSceneAdapter({
         bytes: wasmBytes,
         manifest,
@@ -235,7 +241,8 @@ const fixtures = suiteMode
     ? (await loadHitSceneBenchmarkSuite("test_output/hit-scene-benchmark-suite.json")).fixtures
     : [await loadHitSceneBenchmark("test_output/hit-scene-benchmark.json")];
 const candidates = [await loadVir()];
-const fir = await loadFir();
+assert.ok(!(virOnly && requireFir), "--vir-only and --require-fir are mutually exclusive");
+const fir = virOnly ? null : await loadFir();
 if (fir !== null) candidates.push(fir);
 if (requireFir) assert.ok(fir, "stage the immutable FIR HitScene package before measuring");
 

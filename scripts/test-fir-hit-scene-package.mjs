@@ -48,7 +48,7 @@ assert.deepEqual(build.capabilities?.browserAdapter?.operations, [
     "hitTestDiagnostic",
     "disposeHitScene",
 ]);
-assert.equal(build.capabilities?.inputLayout?.version, "lean-4.32-Illuminate.HitScene/v1");
+assert.equal(build.capabilities?.inputLayout?.version, "lean-4.32-Illuminate.HitScene/v2");
 assert.equal(
     build.capabilities?.ownership?.version,
     "fir.illuminate-hit-scene.persistent-checkpoint/v1",
@@ -105,11 +105,11 @@ assert.deepEqual(
 const expectedSources = new Map([
     [
         "src/Illuminate/Diagram/HitScene.lean",
-        "a37e5a8af3c5477c445b9d123d767eb719ab6f351e5dd9abf8914919959fe7f2",
+        "1e51512bbe246654cfb8b1c16b40101c659e91d6bbe9bb0745b8b11257ff997e",
     ],
     [
         "src/Illuminate/Diagram/HitTest.lean",
-        "8e8b73223cf3867fc1e7e5b9bba0c49cc94f2a0a07c6a881d55ece6259f8c3cb",
+        "c2e4e0cf31a291c5d04f13dfae3f82b78f9fb519f3ae1c48058a7db2149c137d",
     ],
     [
         "src/Illuminate/Geometry/Trace.lean",

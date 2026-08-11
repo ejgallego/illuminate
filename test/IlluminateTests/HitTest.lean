@@ -299,6 +299,17 @@ def testPreparedHitScene_matchesDiagram : IO Unit := do
   assertTrue (scene.label? 2 == some "front") "prepared hit scene should retain labels"
   assertTrue (scene.query 6 0 == .tag 2 "front") "prepared query should return its tag label"
 
+def testPreparedHitScene_pathBounds : IO Unit := do
+  let diagram : Diagram SVG := Diagram.rect 10 6 (stroke := { width := 2 })
+  match diagram.prepareHitScene |>.tree with
+  | .primitive (.path _ _ strokeWidth left right bottom top) =>
+    assertApproxEq strokeWidth 2 "prepared path stroke width"
+    assertApproxEq left (-6.000001) "prepared path left bound" 1e-8
+    assertApproxEq right 6.000001 "prepared path right bound" 1e-8
+    assertApproxEq bottom (-4.000001) "prepared path bottom bound" 1e-8
+    assertApproxEq top 4.000001 "prepared path top bound" 1e-8
+  | _ => throw <| IO.userError "expected one prepared path primitive"
+
 def testPreparedHitScene_writeBenchmarkFixture : IO Unit := do
   IO.FS.createDirAll "test_output"
   let fixture := preparedHitBenchmarkFixture
@@ -324,5 +335,6 @@ def hitTestTests : List (String × IO Unit) :=
   , ("hitTest: gradient fill interior", testHitTest_gradientFill_interior)
   , ("hitTest: gradient fill outside", testHitTest_gradientFill_outside)
   , ("hitTest: prepared scene agrees", testPreparedHitScene_matchesDiagram)
+  , ("hitTest: prepared path stores stroke-expanded bounds", testPreparedHitScene_pathBounds)
   , ("hitTest: write prepared benchmark fixture", testPreparedHitScene_writeBenchmarkFixture)
   ]

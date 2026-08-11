@@ -55,6 +55,10 @@ const encodedScene = JSON.stringify({
                         ],
                         hasFill: true,
                         strokeWidth: 1,
+                        left: -0.5,
+                        right: 2.5,
+                        bottom: -0.5,
+                        top: 2.5,
                     },
                 },
             },
@@ -83,6 +87,19 @@ assert.equal(
     projected.tree.fields.front.fields.child.fields.child.value.fields.data.commands[3].fields
         .xRotation,
     0,
+);
+assert.equal(projected.tree.fields.front.fields.child.fields.child.value.fields.left, -0.5);
+assert.equal(projected.tree.fields.front.fields.child.fields.child.value.fields.top, 2.5);
+const legacyScene = JSON.parse(encodedScene);
+const legacyPath = legacyScene.tree.front.child.child.value;
+delete legacyPath.left;
+delete legacyPath.right;
+delete legacyPath.bottom;
+delete legacyPath.top;
+const legacyProjected = projectHitSceneForVir(legacyScene);
+assert.equal(
+    Object.hasOwn(legacyProjected.tree.fields.front.fields.child.fields.child.value.fields, "left"),
+    false,
 );
 assert.deepEqual(projected.labels, [{ fst: 7, snd: "shape" }]);
 assert.deepEqual(normalizeVirHitSceneResult({ kind: "nothing" }), { kind: "nothing" });
