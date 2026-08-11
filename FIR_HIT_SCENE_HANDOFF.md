@@ -1,6 +1,105 @@
 # FIR-native prepared hit-scene handoff
 
-## Current FIR status
+## Current v2 regeneration request
+
+Illuminate has accepted conservative prepared-path bounds at this
+clean, published functional revision:
+
+```text
+repository: git@github.com:ejgallego/illuminate.git
+branch:     feat/vir-hit-scene
+revision:   88dcfee895a55e804641bff485024cffec1b5419
+toolchain:  leanprover/lean4:v4.33.0-rc2
+```
+
+The real entry remains unchanged:
+
+```lean
+Illuminate.HitScene.query :
+  HitScene → Float → Float → HitSceneResult
+```
+
+The browser API operations may remain
+`fir.illuminate-hit-scene.browser/v1`, but the accepted input-layout
+capability must now be:
+
+```text
+lean-4.32-Illuminate.HitScene/v2
+```
+
+`HitPrimitive.path` has four new retained `Float` fields after its
+existing payload:
+
+```lean
+| path (data : PathData) (hasFill : Bool) (strokeWidth : Float)
+    (left right bottom top : Float)
+```
+
+`HitScene.encode` exposes them as the JSON properties `left`, `right`,
+`bottom`, and `top`. Encode those four binary64 values once with the
+resident scene. Do not recompute bounds, drop fields, or implement
+query semantics in the adapter. The per-query boundary remains only
+the retained scene handle and two bit-exact `Float` coordinates.
+
+The exact source inventory is:
+
+```text
+1e51512bbe246654cfb8b1c16b40101c659e91d6bbe9bb0745b8b11257ff997e  src/Illuminate/Diagram/HitScene.lean
+c2e4e0cf31a291c5d04f13dfae3f82b78f9fb519f3ae1c48058a7db2149c137d  src/Illuminate/Diagram/HitTest.lean
+21956218724ce7deb9ef00354c01261f33dc17c294b013c69494ea8374997a16  src/Illuminate/Geometry/Trace.lean
+92dc894058d3e4a5e08d2a5a1fc3bf1d47bdfd52aa3ff1ec8226bdd04a265793  src/Illuminate/Geometry/PathData.lean
+ed63356e5f21cd40b5b653510f20fb71e54b89b4072d848a5a58a66bd4b4d1d0  src/Illuminate/Geometry/Types.lean
+28cd47a7d678913ed0d22eeb6284637bfa99860bf760e2225bbd31dec1af80a3  src/Illuminate/Geometry/Matrix.lean
+```
+
+The regenerated fixtures are:
+
+```text
+6a599bf13b9aa3dde0a463f0fea4961021241629b31889058c805d66c5d7b0a1  test_output/hit-scene-benchmark.json
+45ee28cbd2eb0ffc0e83e88fbfd9587a5bc325afa638f477837fb38cbf11676d  test_output/hit-scene-benchmark-suite.json
+```
+
+The suite still contains 83 bounds, 301 mixed, and 625 path-heavy
+oracle queries. Old and new VIR packages matched every query in an
+order-balanced comparison. The bounded VIR median was neutral on the
+bounds fixture, 3.42× faster on mixed geometry, and 21.74× faster on
+the path-heavy scene.
+
+The v1 FIR package must not be reused. Its first observed mismatch
+with the v2 scene was:
+
+```text
+fixture:  mixed-medium
+query:    grid-8-5
+xBits:    0
+yBits:    13844628204490326016
+expected: {"kind":"tag","value":1,"label":"back"}
+actual:   {"kind":"something"}
+```
+
+Illuminate now rejects the v1 layout in staging, Node measurement, and
+the live browser loader. `--vir-only` is available while the v2
+package is pending.
+
+Please regenerate the self-contained, zero-import package from the
+published revision, preserve the resident checkpoint and untimed plus
+diagnostic query paths, and return the immutable package directory,
+FIR commit, BUILD capabilities, complete/base Wasm hashes and sizes,
+export list, source inventory, and smoke result. Illuminate will run:
+
+```sh
+ILLUMINATE_FIR_HIT_SCENE_DIR=/absolute/immutable/v2-package \
+  npm run stage:fir-hit-scene
+npm run test:fir-hit-scene-package
+npm run test:fir-hit-scene-host
+npm run measure:hit-scene -- --suite --quick --require-fir
+```
+
+## Historical compiler-admission context
+
+The remainder of this file records the original v1 compiler and
+runtime-package requirements. Where it conflicts with the v2 request
+above, the v2 revision, hashes, and input layout take precedence.
 
 The compiler-admission slice and its W6 lazy-cache result-kind proof
 are linked and accepted on FIR `main`. The acceptance commit is
