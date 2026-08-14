@@ -5,7 +5,7 @@ import { parseHitScenePerformanceHistory } from "./hit_scene_performance_history
 import { createVirHitSceneHost, createVirSpatialHitSceneHost } from "./vir_hit_scene.js";
 
 /**
- * @typedef {"vir" | "fir"} HitScenePerformanceBackend
+ * @typedef {"vir" | "fir" | "spatial" | "spatialFir"} HitScenePerformanceBackend
  * @typedef {{ count: number, meanMs: number, medianMs: number, p95Ms: number, maxMs: number }} TimingSummary
  * @typedef {{ creationMs: number, query: TimingSummary }} ProductionResult
  * @typedef {{ medianMs: number }} PhaseSummary
@@ -20,9 +20,14 @@ import { createVirHitSceneHost, createVirSpatialHitSceneHost } from "./vir_hit_s
  * }} HitScenePerformanceReport
  */
 
-const backendOrder = /** @type {const} */ (["vir", "fir"]);
+const backendOrder = /** @type {const} */ (["vir", "fir", "spatial", "spatialFir"]);
 /** @type {Record<HitScenePerformanceBackend, string>} */
-const backendLabels = { vir: "VIR interpreter", fir: "FIR native Wasm" };
+const backendLabels = {
+    vir: "Reference · VIR",
+    fir: "Reference · FIR",
+    spatial: "Spatial · VIR",
+    spatialFir: "Spatial · FIR",
+};
 /** @type {Array<{ label: string, vir: string | null, fir: string | null }>} */
 const phaseGroups = [
     { label: "Input / marshal", vir: "marshalMs", fir: "inputMs" },
@@ -218,6 +223,26 @@ async function loadSpatialVirCandidate() {
     return {
         name: "spatial",
         label: "Spatial VIR",
+        metadata: {
+            available: true,
+            measurementMode: "live browser runtime.call; diagnostic runtime.callTimed",
+            wasmBytes: wasmBytes.byteLength,
+            packageMembers: descriptor.packages.length,
+        },
+        benchmark: {
+            create(/** @type {{ encodedScene: string }} */ { encodedScene }) {
+                return createVirSpatialHitSceneHost(runtime, encodedScene);
+            },
+            query(/** @type {any} */ host, /** @type {number} */ x, /** @type {number} */ y) {
+                return host.query(x, y);
+            },
+            dispose(/** @type {any} */ host) {
+                host.dispose();
+            },
+        },
+        createProfiled(/** @type {any} */ fixture, /** @type {any} */ observer) {
+            return createVirSpatialHitSceneHost(runtime, fixture.encodedScene, observer);
+        },
         create(/** @type {any} */ fixture) {
             return createVirSpatialHitSceneHost(runtime, fixture.encodedScene);
         },
@@ -283,6 +308,65 @@ async function loadFirCandidate() {
     };
 }
 
+async function loadSpatialFirCandidate() {
+    const buildResponse = await fetch("./fir-spatial-hit-scene/BUILD.json", {
+        cache: "no-store",
+    });
+    if (buildResponse.status === 404) return null;
+    const build = await requireOk(buildResponse, "spatial FIR BUILD.json").then((response) =>
+        response.json(),
+    );
+    if (
+        build.capabilities?.browserAdapter?.apiVersion !==
+            "fir.illuminate-spatial-hit-scene.browser/v1" ||
+        build.capabilities?.inputLayout?.version !== "lean-4.33-Illuminate.SpatialHitScene/v1"
+    ) {
+        return null;
+    }
+    const adapterUrl = new URL(
+        "./fir-spatial-hit-scene/illuminate-spatial-hit-scene-browser-adapter.mjs",
+        location.href,
+    ).href;
+    const [adapterModule, wasmBytes] = await Promise.all([
+        import(adapterUrl),
+        fetchBytes("./fir-spatial-hit-scene/illuminate-spatial-hit-scene.wasm"),
+    ]);
+    const adapter = await adapterModule.createIlluminateSpatialHitSceneAdapter({
+        bytes: wasmBytes,
+        build,
+    });
+    return {
+        name: "spatialFir",
+        label: "Spatial FIR",
+        metadata: {
+            available: true,
+            measurementMode:
+                "live untimed spatial FIR hitTest; separate hitTestDiagnostic phase attribution",
+            wasmBytes: wasmBytes.byteLength,
+            firCommit: build.sources?.fir?.commit,
+            illuminateCommit: build.sources?.illuminate?.commit,
+        },
+        benchmark: {
+            create(/** @type {{ encodedScene: string }} */ { encodedScene }) {
+                return createFirHitSceneHost(adapter, encodedScene);
+            },
+            query(/** @type {any} */ host, /** @type {number} */ x, /** @type {number} */ y) {
+                return host.query(x, y);
+            },
+            dispose(/** @type {any} */ host) {
+                host.dispose();
+            },
+        },
+        createProfiled(/** @type {any} */ fixture, /** @type {any} */ observer) {
+            return createFirHitSceneHost(adapter, fixture.encodedScene, observer);
+        },
+        create(/** @type {any} */ fixture) {
+            return createFirHitSceneHost(adapter, fixture.encodedScene);
+        },
+        dispose() {},
+    };
+}
+
 /** @param {any[]} candidates @param {any} fixture @param {any} runPairedHitSceneBenchmark */
 async function measureLiveFixture(candidates, fixture, runPairedHitSceneBenchmark) {
     const production = /** @type {any} */ (
@@ -295,20 +379,21 @@ async function measureLiveFixture(candidates, fixture, runPairedHitSceneBenchmar
         )
     );
     const diagnostics = profileCandidates(candidates, fixture);
-    const firAvailable = candidates.some((candidate) => candidate.name === "fir");
-    const firOverVir = firAvailable
-        ? {
-              median: production.fir.query.medianMs / production.vir.query.medianMs,
-              pairedQueryRatio: {
-                  median: summarize(
-                      production.fir.samples.map(
-                          (/** @type {number} */ sample, /** @type {number} */ index) =>
-                              sample / production.vir.samples[index],
-                      ),
-                  ).medianMs,
-              },
-          }
-        : null;
+    /** @param {string} candidate @param {string} reference */
+    function pairedDelta(candidate, reference) {
+        if (production[candidate] === undefined || production[reference] === undefined) return null;
+        return {
+            median: production[candidate].query.medianMs / production[reference].query.medianMs,
+            pairedQueryRatio: {
+                median: summarize(
+                    production[candidate].samples.map(
+                        (/** @type {number} */ sample, /** @type {number} */ index) =>
+                            sample / production[reference].samples[index],
+                    ),
+                ).medianMs,
+            },
+        };
+    }
     return {
         fixture: {
             name: fixture.name,
@@ -319,7 +404,12 @@ async function measureLiveFixture(candidates, fixture, runPairedHitSceneBenchmar
         },
         production,
         diagnostics,
-        deltas: { firOverVir },
+        deltas: {
+            firOverVir: pairedDelta("fir", "vir"),
+            spatialFirOverSpatialVir: pairedDelta("spatialFir", "spatial"),
+            spatialVirOverVir: pairedDelta("spatial", "vir"),
+            spatialFirOverFir: pairedDelta("spatialFir", "fir"),
+        },
     };
 }
 
@@ -329,9 +419,11 @@ async function runLiveMeasurement(onProgress) {
         await import("../scripts/lib/hit-scene-benchmark.mjs");
     const suite = await fetchHitSceneBenchmarkSuite("./hit-scene-benchmark-suite.json");
     /** @type {any[]} */
-    const candidates = [await loadVirCandidate()];
+    const candidates = [await loadVirCandidate(), await loadSpatialVirCandidate()];
     const fir = await loadFirCandidate();
     if (fir !== null) candidates.push(fir);
+    const spatialFir = await loadSpatialFirCandidate();
+    if (spatialFir !== null) candidates.push(spatialFir);
     try {
         const workloads = [];
         for (const [index, fixture] of suite.fixtures.entries()) {
@@ -369,7 +461,7 @@ async function runLiveMeasurement(onProgress) {
             caveats: [
                 "This report was measured live in the current browser tab.",
                 "The existing JavaScript widget has no independent hit-test algorithm; its baseline is Lean server RPC in the InfoView.",
-                "The standalone runner compares browser-resident Lean through VIR and FIR only.",
+                "The standalone runner compares the reference and spatial Lean algorithms through VIR and FIR.",
                 "Production samples use normal public query paths; detailed phase timing is collected in a separate pass.",
             ],
         };
@@ -501,6 +593,8 @@ function render(report) {
         const values = {
             vir: phaseMedian(report, "vir", phase.vir),
             fir: phaseMedian(report, "fir", phase.fir),
+            spatial: phaseMedian(report, "spatial", phase.vir),
+            spatialFir: phaseMedian(report, "spatialFir", phase.fir),
         };
         const presentValues = Object.values(values).filter(
             /** @returns {value is number} */ (value) => value !== null && Number.isFinite(value),
@@ -589,9 +683,13 @@ function renderTierPerformance(report) {
     const container = requireElement("[data-workloads]");
     container.replaceChildren();
     for (const workload of report.workloads ?? []) {
-        const vir = workload.production?.vir?.query?.medianMs;
-        const fir = workload.production?.fir?.query?.medianMs;
-        const present = [vir, fir].filter(
+        const values = Object.fromEntries(
+            backendOrder.map((backend) => [
+                backend,
+                workload.production?.[backend]?.query?.medianMs,
+            ]),
+        );
+        const present = Object.values(values).filter(
             /** @returns {value is number} */ (value) => Number.isFinite(value),
         );
         const scale = Math.max(0.000001, ...present);
@@ -602,10 +700,8 @@ function renderTierPerformance(report) {
             element("span", "badge", workload.fixture.geometryClass),
         );
         const bars = element("div", "tier-bars");
-        for (const [backend, value] of [
-            ["vir", vir],
-            ["fir", fir],
-        ]) {
+        for (const backend of backendOrder) {
+            const value = values[backend];
             const row = element("div", `tier-row ${backend}`);
             const track = element("i", "");
             const fill = element("b", "");
@@ -614,23 +710,32 @@ function renderTierPerformance(report) {
                 : "0";
             track.append(fill);
             row.append(
-                element("span", "", backend.toUpperCase()),
+                element("span", "", backendLabels[backend]),
                 track,
                 element("output", "", milliseconds(value)),
             );
             bars.append(row);
         }
-        const speedup = Number.isFinite(vir) && Number.isFinite(fir) ? vir / fir : null;
+        const referenceRatio =
+            Number.isFinite(values.vir) && Number.isFinite(values.fir)
+                ? values.fir / values.vir
+                : null;
+        const spatialRatio =
+            Number.isFinite(values.spatial) && Number.isFinite(values.spatialFir)
+                ? values.spatialFir / values.spatial
+                : null;
+        const ratioSummary = [
+            referenceRatio === null ? null : `reference FIR/VIR ${referenceRatio.toFixed(2)}×`,
+            spatialRatio === null ? null : `spatial FIR/VIR ${spatialRatio.toFixed(2)}×`,
+        ]
+            .filter(Boolean)
+            .join(" · ");
         card.append(
             title,
             metric("Encoded scene", `${workload.fixture.encodedBytes.toLocaleString()} B`),
             metric("Queries", workload.fixture.queryCount.toLocaleString()),
             bars,
-            element(
-                "output",
-                "tier-ratio",
-                speedup === null ? "FIR package not staged" : `FIR ${speedup.toFixed(1)}× faster`,
-            ),
+            element("output", "tier-ratio", ratioSummary || "FIR package pair not staged"),
         );
         container.append(card);
     }
@@ -966,7 +1071,16 @@ async function createHitProbeSession() {
             dispose: () => fir.dispose(),
         });
     }
-    /** @type {Array<{ candidate: any, host: any, samples: number[], ratioSamples: number[], deltaSamples: number[] }>} */
+    const spatialFir = await loadSpatialFirCandidate();
+    if (spatialFir !== null) {
+        candidates.push({
+            name: "spatialFir",
+            label: "Spatial FIR",
+            create: (/** @type {any} */ fixture) => spatialFir.create(fixture),
+            dispose: () => spatialFir.dispose(),
+        });
+    }
+    /** @type {Array<{ candidate: any, host: any, samples: number[], comparisonSamples: Map<string, { ratios: number[], deltas: number[] }> }>} */
     let mounted = [];
     let queryNumber = 0;
 
@@ -984,8 +1098,7 @@ async function createHitProbeSession() {
                 candidate,
                 host: candidate.create(fixture),
                 samples: [],
-                ratioSamples: [],
-                deltaSamples: [],
+                comparisonSamples: new Map(),
             }));
             queryNumber = 0;
         },
@@ -1023,14 +1136,29 @@ async function createHitProbeSession() {
                     );
                 }
             }
-            const reference = observations.find((observation) => observation.name === "vir");
-            if (reference === undefined) throw new Error("live HitScene reference VIR is missing");
             return observations.map((observation) => {
-                const ratio =
-                    reference.duration > 0 ? observation.duration / reference.duration : 1;
-                const delta = observation.duration - reference.duration;
-                pushRolling(observation.item.ratioSamples, ratio);
-                pushRolling(observation.item.deltaSamples, delta);
+                const comparisons = Object.fromEntries(
+                    observations.map((reference) => {
+                        let samples = observation.item.comparisonSamples.get(reference.name);
+                        if (samples === undefined) {
+                            samples = { ratios: [], deltas: [] };
+                            observation.item.comparisonSamples.set(reference.name, samples);
+                        }
+                        pushRolling(
+                            samples.ratios,
+                            reference.duration > 0 ? observation.duration / reference.duration : 1,
+                        );
+                        pushRolling(samples.deltas, observation.duration - reference.duration);
+                        return [
+                            reference.name,
+                            {
+                                ratioMedian: rollingMedian(samples.ratios),
+                                ratioP95: rollingPercentile(samples.ratios, 0.95),
+                                deltaMedian: rollingMedian(samples.deltas),
+                            },
+                        ];
+                    }),
+                );
                 return {
                     name: observation.name,
                     label: observation.label,
@@ -1039,9 +1167,7 @@ async function createHitProbeSession() {
                     median: observation.median,
                     p95: observation.p95,
                     count: observation.count,
-                    ratioMedian: rollingMedian(observation.item.ratioSamples),
-                    ratioP95: rollingPercentile(observation.item.ratioSamples, 0.95),
-                    deltaMedian: rollingMedian(observation.item.deltaSamples),
+                    comparisons,
                 };
             });
         },
@@ -1115,18 +1241,38 @@ function installHitProbe() {
 
         for (const groupSpec of [
             {
-                id: "runtime",
+                id: "runtime-reference",
                 title: "Runtime boundary · reference algorithm",
                 detail: "VIR interpreter versus FIR native Wasm",
                 names: ["vir", "fir"],
+                reference: "vir",
             },
             {
-                id: "algorithm",
+                id: "runtime-spatial",
+                title: "Runtime boundary · spatial algorithm",
+                detail: "VIR interpreter versus FIR native Wasm",
+                names: ["spatial", "spatialFir"],
+                reference: "spatial",
+            },
+            {
+                id: "algorithm-vir",
                 title: "Algorithm · VIR interpreter",
                 detail: "reference tree versus spatial tree",
                 names: ["vir", "spatial"],
+                reference: "vir",
+            },
+            {
+                id: "algorithm-fir",
+                title: "Algorithm · FIR native Wasm",
+                detail: "reference tree versus spatial tree",
+                names: ["fir", "spatialFir"],
+                reference: "fir",
             },
         ]) {
+            const groupCandidates = groupSpec.names
+                .map((name) => candidates.find((item) => item.name === name))
+                .filter((candidate) => candidate !== undefined);
+            if (groupCandidates.length < 2) continue;
             const group = element("section", "probe-chart-group");
             group.dataset.probeChartGroup = groupSpec.id;
             const heading = element("header", "probe-chart-group-heading");
@@ -1135,12 +1281,11 @@ function installHitProbe() {
                 element("small", "", groupSpec.detail),
             );
             group.append(heading);
-            for (const name of groupSpec.names) {
-                const candidate = candidates.find((item) => item.name === name);
-                if (candidate === undefined) continue;
+            for (const candidate of groupCandidates) {
                 const row = element("div", `probe-chart-row ${candidate.name}`);
                 row.dataset.probeChartBackend = candidate.name;
                 row.dataset.probeChartComparison = groupSpec.id;
+                row.dataset.probeChartReference = groupSpec.reference;
                 const label = element("div", "probe-chart-label");
                 label.append(
                     element("span", "", candidate.label),
@@ -1157,13 +1302,10 @@ function installHitProbe() {
         chartNote.textContent = `${hitProbeBatchSize}-query paired batches are warming; all bars share one zero-based scale.`;
     }
 
-    /** @param {Array<{ name: string, median: number, p95: number, count: number, ratioMedian: number, ratioP95: number, deltaMedian: number }>} observations */
+    /** @param {Array<{ name: string, label: string, median: number, p95: number, count: number, comparisons: Record<string, { ratioMedian: number, ratioP95: number, deltaMedian: number }> }>} observations */
     function renderLiveComparison(observations) {
-        const reference = observations.find((observation) => observation.name === "vir");
-        if (reference === undefined) return;
         const maximum = Math.max(0, ...observations.map((observation) => observation.median));
         const scale = maximum > 0 ? maximum : 1;
-        const referencePosition = Math.min(99.5, (100 * reference.median) / scale);
         const minimumSamples = Math.min(...observations.map((observation) => observation.count));
         for (const observation of observations) {
             const rows = chartRows.querySelectorAll(
@@ -1174,6 +1316,14 @@ function installHitProbe() {
                 const marker = row.querySelector(".probe-chart-track b");
                 const output = row.querySelector("output");
                 const tail = row.querySelector(".probe-chart-tail");
+                const referenceName =
+                    row instanceof HTMLElement ? row.dataset.probeChartReference : undefined;
+                const reference = observations.find((item) => item.name === referenceName);
+                const comparison = referenceName
+                    ? observation.comparisons[referenceName]
+                    : undefined;
+                if (reference === undefined || comparison === undefined) continue;
+                const referencePosition = Math.min(99.5, (100 * reference.median) / scale);
                 if (fill instanceof HTMLElement) {
                     fill.style.width = `${Math.max(1, (100 * observation.median) / scale)}%`;
                 }
@@ -1181,14 +1331,14 @@ function installHitProbe() {
                 if (output) {
                     output.textContent =
                         `${(observation.median * 1000).toFixed(1)} µs · ` +
-                        `${observation.ratioMedian.toFixed(2)}× VIR`;
+                        `${comparison.ratioMedian.toFixed(2)}× ${reference.label}`;
                 }
                 if (tail) {
-                    const delta = observation.deltaMedian * 1000;
+                    const delta = comparison.deltaMedian * 1000;
                     tail.textContent =
                         `p95 ${(observation.p95 * 1000).toFixed(1)} µs · ` +
                         `paired Δ ${delta >= 0 ? "+" : ""}${delta.toFixed(1)} µs · ` +
-                        `ratio p95 ${observation.ratioP95.toFixed(2)}×`;
+                        `ratio p95 ${comparison.ratioP95.toFixed(2)}×`;
                 }
             }
         }
@@ -1273,7 +1423,7 @@ function installHitProbe() {
             return;
         }
         toggle.disabled = true;
-        status.textContent = "Loading retained reference VIR, spatial VIR, and FIR scenes…";
+        status.textContent = "Loading retained reference and spatial scenes through VIR and FIR…";
         await new Promise((resolve) => requestAnimationFrame(resolve));
         try {
             session = await createHitProbeSession();
@@ -1490,7 +1640,7 @@ liveButton.addEventListener("click", async function () {
         liveProgress.max = 3;
         liveProgress.value = 0;
     }
-    liveStatus.textContent = "Loading VIR, FIR, and the three retained-scene workloads…";
+    liveStatus.textContent = "Loading the VIR/FIR 2×2 matrix and three retained-scene workloads…";
     await new Promise((resolve) => requestAnimationFrame(resolve));
     try {
         const report = await runLiveMeasurement(function (completed, total, name) {
@@ -1503,9 +1653,9 @@ liveButton.addEventListener("click", async function () {
         render(/** @type {HitScenePerformanceReport} */ (report));
         renderTierPerformance(report);
         liveStatus.textContent =
-            report.production.fir === undefined
-                ? "Live VIR workload suite complete; no FIR package is staged."
-                : "Live paired VIR/FIR workload suite complete; every result matched.";
+            report.production.spatialFir === undefined
+                ? "Live VIR workload suite complete; the FIR pair is not fully staged."
+                : "Live 2×2 VIR/FIR reference/spatial suite complete; every result matched.";
     } catch (error) {
         liveStatus.textContent = `Live measurement failed: ${error instanceof Error ? error.message : String(error)}`;
     } finally {

@@ -5509,6 +5509,11 @@ function createInfoviewHostBindings({ resources = createHostResourceState(), com
       commandDispatcher,
       resources.resolveResource(position, "DocumentPosition")
     )),
+    "infoview.command.insertText": (position, text) => resources.resourceForValue(insertInfoviewText(
+      commandDispatcher,
+      resources.resolveResource(position, "DocumentPosition"),
+      resources.resolveResource(text, "JsString")
+    )),
     "proofwidgets.rpc.ref": (id, label, typeName, summary, expression) => resources.resourceForValue({
       id: resources.resolveResource(id, "JsString"),
       label: resources.resolveResource(label, "JsString"),
@@ -5611,6 +5616,13 @@ function revealInfoviewPosition(commandDispatcher, position) {
   }
   return dispatchInfoviewCommand(commandDispatcher, "revealPosition", normalized);
 }
+function insertInfoviewText(commandDispatcher, position, text) {
+  const normalized = normalizeInfoviewDocumentPosition(position);
+  if (normalized === null || typeof text !== "string") {
+    return false;
+  }
+  return dispatchInfoviewCommand(commandDispatcher, "insertText", normalized, text);
+}
 function nullableField(resources, value, name) {
   const payload = nullablePayload(resources, value);
   return payload === null ? {} : { [name]: payload };
@@ -5691,13 +5703,13 @@ function nonNegativeInteger(value) {
   }
   return null;
 }
-function dispatchInfoviewCommand(commandDispatcher, name, payload) {
+function dispatchInfoviewCommand(commandDispatcher, name, ...payload) {
   const handler = infoviewCommandHandler(commandDispatcher, name);
   if (handler === null) {
     return false;
   }
   try {
-    const result = handler(payload);
+    const result = handler(...payload);
     if (result !== null && typeof result === "object" && typeof result.then === "function") {
       result.catch((error) => {
         reportEventHandlerError(error);

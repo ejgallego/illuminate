@@ -9,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { createFirHitSceneHost } from "../player_js/fir_hit_scene.js";
-import { createVirHitSceneHost } from "../player_js/vir_hit_scene.js";
+import { createVirHitSceneHost, createVirSpatialHitSceneHost } from "../player_js/vir_hit_scene.js";
 import {
     loadHitSceneBenchmark,
     loadHitSceneBenchmarkSuite,
@@ -22,6 +22,7 @@ const execFileAsync = promisify(execFile);
 
 const quick = process.argv.includes("--quick");
 const requireFir = process.argv.includes("--require-fir");
+const requireSpatialFir = process.argv.includes("--require-spatial-fir");
 const virOnly = process.argv.includes("--vir-only");
 const suiteMode = process.argv.includes("--suite");
 const outputArgument = process.argv.find((argument) => argument.startsWith("--output="));
@@ -36,6 +37,7 @@ const warmupRounds = quick ? 1 : 2;
 const measuredRounds = quick ? 2 : 10;
 const profileRounds = quick ? 1 : 5;
 const firStageRoot = path.resolve("test_output/fir-hit-scene");
+const spatialFirStageRoot = path.resolve("test_output/fir-spatial-hit-scene");
 const fixturePath = suiteMode
     ? "test_output/hit-scene-benchmark-suite.json"
     : "test_output/hit-scene-benchmark.json";
@@ -162,6 +164,48 @@ async function loadVir() {
     };
 }
 
+async function loadSpatialVir() {
+    const wasmBytes = await readFile("test_output/vir/sdk/wasm/vir-upstream.wasm");
+    const descriptorUrl = new URL(
+        "../test_output/vir/module-sets/Illuminate/Diagram/HitScene/SpatialVir/SpatialVir.irpkg-set.json",
+        import.meta.url,
+    );
+    const descriptorBytes = await readFile(descriptorUrl);
+    const descriptor = JSON.parse(descriptorBytes.toString("utf8"));
+    const packageSetBytes = await Promise.all(
+        descriptor.packages.map((member) => readFile(new URL(member.path, descriptorUrl))),
+    );
+    const runtime = await createVirRuntime({ wasmBytes, irPackageSetBytes: packageSetBytes });
+    return {
+        name: "spatial",
+        metadata: {
+            available: true,
+            measurementMode: "runtime.call for production; runtime.callTimed for diagnostics",
+            wasmBytes: wasmBytes.byteLength,
+            wasmSha256: sha256(wasmBytes),
+            packageMembers: descriptor.packages.length,
+            packageSetSha256: sha256(Buffer.concat([descriptorBytes, ...packageSetBytes])),
+        },
+        benchmark: {
+            create({ encodedScene }) {
+                return createVirSpatialHitSceneHost(runtime, encodedScene);
+            },
+            query(host, x, y) {
+                return host.query(x, y);
+            },
+            dispose(host) {
+                host.dispose();
+            },
+        },
+        createProfiled(fixture, observer) {
+            return createVirSpatialHitSceneHost(runtime, fixture.encodedScene, observer);
+        },
+        dispose() {
+            runtime.dispose();
+        },
+    };
+}
+
 async function loadFir() {
     const filenames = {
         adapter: path.join(firStageRoot, "illuminate-hit-scene-browser-adapter.mjs"),
@@ -193,6 +237,61 @@ async function loadFir() {
     });
     return {
         name: "fir",
+        metadata: {
+            available: true,
+            measurementMode:
+                "untimed adapter hitTest for production; hitTestDiagnostic for phase attribution",
+            wasmBytes: wasmBytes.byteLength,
+            wasmSha256: sha256(wasmBytes),
+            buildSha256: sha256(buildBytes),
+            firCommit: build.sources?.fir?.commit,
+            illuminateCommit: build.sources?.illuminate?.commit,
+        },
+        benchmark: {
+            create({ encodedScene }) {
+                return createFirHitSceneHost(adapter, encodedScene);
+            },
+            query(host, x, y) {
+                return host.query(x, y);
+            },
+            dispose(host) {
+                host.dispose();
+            },
+        },
+        createProfiled(fixture, observer) {
+            return createFirHitSceneHost(adapter, fixture.encodedScene, observer);
+        },
+        dispose() {},
+    };
+}
+
+async function loadSpatialFir() {
+    const filenames = {
+        adapter: path.join(spatialFirStageRoot, "illuminate-spatial-hit-scene-browser-adapter.mjs"),
+        build: path.join(spatialFirStageRoot, "BUILD.json"),
+        wasm: path.join(spatialFirStageRoot, "illuminate-spatial-hit-scene.wasm"),
+    };
+    if (!(await fileExists(filenames.build))) return null;
+    const [adapterModule, buildBytes, wasmBytes] = await Promise.all([
+        import(pathToFileURL(filenames.adapter).href),
+        readFile(filenames.build),
+        readFile(filenames.wasm),
+    ]);
+    const build = JSON.parse(buildBytes.toString("utf8"));
+    assert.equal(
+        build.capabilities?.browserAdapter?.apiVersion,
+        "fir.illuminate-spatial-hit-scene.browser/v1",
+    );
+    assert.equal(
+        build.capabilities?.inputLayout?.version,
+        "lean-4.33-Illuminate.SpatialHitScene/v1",
+    );
+    const adapter = await adapterModule.createIlluminateSpatialHitSceneAdapter({
+        bytes: wasmBytes,
+        build,
+    });
+    return {
+        name: "spatialFir",
         metadata: {
             available: true,
             measurementMode:
@@ -256,11 +355,19 @@ const fixtureBytes = await readFile(fixturePath);
 const fixtures = suiteMode
     ? (await loadHitSceneBenchmarkSuite(fixturePath)).fixtures
     : [await loadHitSceneBenchmark(fixturePath)];
-const candidates = [await loadVir()];
-assert.ok(!(virOnly && requireFir), "--vir-only and --require-fir are mutually exclusive");
+const candidates = [await loadVir(), await loadSpatialVir()];
+assert.ok(
+    !(virOnly && (requireFir || requireSpatialFir)),
+    "--vir-only and FIR requirements are mutually exclusive",
+);
 const fir = virOnly ? null : await loadFir();
 if (fir !== null) candidates.push(fir);
 if (requireFir) assert.ok(fir, "stage the immutable FIR HitScene package before measuring");
+const spatialFir = virOnly ? null : await loadSpatialFir();
+if (spatialFir !== null) candidates.push(spatialFir);
+if (requireSpatialFir) {
+    assert.ok(spatialFir, "stage the immutable FIR spatial HitScene package before measuring");
+}
 
 async function measureFixture(fixture) {
     const production = await runPairedHitSceneBenchmark(
@@ -269,28 +376,28 @@ async function measureFixture(fixture) {
         { warmupRounds, measuredRounds, retainSamples: true, now: () => performance.now() },
     );
     const diagnostics = profileCandidates(candidates, fixture);
-    const firOverVir =
-        fir === null
-            ? null
-            : {
-                  median: production.fir.query.medianMs / production.vir.query.medianMs,
-                  mean: production.fir.query.meanMs / production.vir.query.meanMs,
-                  p95: production.fir.query.p95Ms / production.vir.query.p95Ms,
-                  creation: production.fir.creationMs / production.vir.creationMs,
-                  execute:
-                      diagnostics.fir.phases.executeMs.medianMs /
-                      diagnostics.vir.phases.executeMs.medianMs,
-                  pairedQueryRatio: summarizeRatios(
-                      production.fir.samples.map(
-                          (sample, index) => sample / production.vir.samples[index],
-                      ),
-                  ),
-                  pairedQueryDeltaMs: summarize(
-                      production.fir.samples.map(
-                          (sample, index) => sample - production.vir.samples[index],
-                      ),
-                  ),
-              };
+    function backendDelta(candidate, reference) {
+        if (production[candidate] === undefined || production[reference] === undefined) return null;
+        return {
+            median: production[candidate].query.medianMs / production[reference].query.medianMs,
+            mean: production[candidate].query.meanMs / production[reference].query.meanMs,
+            p95: production[candidate].query.p95Ms / production[reference].query.p95Ms,
+            creation: production[candidate].creationMs / production[reference].creationMs,
+            execute:
+                diagnostics[candidate].phases.executeMs.medianMs /
+                diagnostics[reference].phases.executeMs.medianMs,
+            pairedQueryRatio: summarizeRatios(
+                production[candidate].samples.map(
+                    (sample, index) => sample / production[reference].samples[index],
+                ),
+            ),
+            pairedQueryDeltaMs: summarize(
+                production[candidate].samples.map(
+                    (sample, index) => sample - production[reference].samples[index],
+                ),
+            ),
+        };
+    }
     return {
         fixture: {
             name: fixture.name,
@@ -301,7 +408,12 @@ async function measureFixture(fixture) {
         },
         production,
         diagnostics,
-        deltas: { firOverVir },
+        deltas: {
+            firOverVir: backendDelta("fir", "vir"),
+            spatialFirOverSpatialVir: backendDelta("spatialFir", "spatial"),
+            spatialVirOverVir: backendDelta("spatial", "vir"),
+            spatialFirOverFir: backendDelta("spatialFir", "fir"),
+        },
     };
 }
 
@@ -363,7 +475,7 @@ try {
             "Production wall time uses each adapter's normal public query path.",
             "VIR detailed timing is disabled in production samples and enabled only for diagnostics.",
             "FIR detailed timing is disabled in production samples and enabled only for diagnostics.",
-            "The FIR/VIR headline uses paired measurements of the same query and round; absolute times remain sensitive to ambient machine load.",
+            "Every runtime and algorithm ratio uses paired measurements of the same query and round; absolute times remain sensitive to ambient machine load.",
             "RPC is measured only inside the Lean infoview and is not represented by this Node report.",
         ],
     };
@@ -388,7 +500,7 @@ try {
                             result.query,
                         ]),
                     ),
-                    firOverVir: measurement.deltas.firOverVir,
+                    deltas: measurement.deltas,
                 })),
             },
             null,

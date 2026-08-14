@@ -29,17 +29,23 @@ if [ -n "${ILLUMINATE_FIR_HIT_SCENE_DIR:-}" ]; then
   npm run stage:fir-hit-scene
 fi
 
+if [ -n "${ILLUMINATE_FIR_SPATIAL_HIT_SCENE_DIR:-}" ]; then
+  npm run stage:fir-spatial-hit-scene
+fi
+
 if [ -f "$repo_root/test_output/native/illuminate-player.wasm" ]; then
   npm run test:player-traces
 fi
 
+hit_scene_requirements=()
 if [ -f "$repo_root/test_output/fir-hit-scene/illuminate-hit-scene.wasm" ]; then
-  npm run measure:hit-scene -- --quick --require-fir
-  npm run measure:hit-scene -- --suite --quick --require-fir
-else
-  npm run measure:hit-scene -- --quick
-  npm run measure:hit-scene -- --suite --quick
+  hit_scene_requirements+=(--require-fir)
 fi
+if [ -f "$repo_root/test_output/fir-spatial-hit-scene/illuminate-spatial-hit-scene.wasm" ]; then
+  hit_scene_requirements+=(--require-spatial-fir)
+fi
+npm run measure:hit-scene -- --quick "${hit_scene_requirements[@]}"
+npm run measure:hit-scene -- --suite --quick "${hit_scene_requirements[@]}"
 npm run profile:vir-hit-scene -- --quick
 npm run measure:vir-spatial-hit-scene -- --quick
 npm run stage:hit-scene-performance

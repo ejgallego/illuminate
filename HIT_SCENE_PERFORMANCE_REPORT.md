@@ -146,9 +146,7 @@ Both VIR variants again held module-owned memory at 4,194,304 bytes
 through 10,000 queries with two simultaneous instances. These two
 tables deliberately answer different questions: the first isolates
 runtime execution on the reference tree, while the second isolates the
-algorithm under VIR. The missing fourth cell is spatial FIR; its exact
-package request and acceptance matrix are in
-`FIR_SPATIAL_HIT_SCENE_HANDOFF.md`.
+algorithm under VIR. The later 2×2 section fills the spatial FIR cell.
 
 Reproduce the refreshed files with:
 
@@ -329,22 +327,73 @@ npm run measure:vir-spatial-hit-scene
 ```
 
 The gitignored v2 detailed result is
-`test_output/vir-spatial-hit-scene-performance.json`. No FIR
-regeneration is requested until the remaining tagged-hit tradeoff is
-accepted and the representation is selected for production.
+`test_output/vir-spatial-hit-scene-performance.json`.
+
+## 2026-08-14 complete 2×2 runtime/algorithm matrix
+
+The accepted spatial FIR package closes the fourth cell. It compiles
+`SpatialHitScene.ofHitScene` and the borrowed scalar query entry from
+FIR commit `afc8b88548a9ae3ab1b9a9f053b3674ba4d58a74`. Its
+self-contained, zero-import Wasm is 96,006 bytes with SHA-256
+`366d84059bd0d0ffba6f77e1d68414dd93b512568359835b7b2620274c7afe74`.
+The adapter receives the same encoded reference scene as the other
+backends and constructs the spatial representation once inside Wasm;
+the expanded tree never crosses the browser boundary.
+
+The Illuminate consumer validates the immutable package manifest,
+source and fixture hashes, exact exports, module-owned memory, and all
+1,009 oracle queries before staging it. The comparison runner now
+measures four candidates in rotating order:
+
+| Algorithm            | VIR interpreter             | FIR native Wasm                         |
+| -------------------- | --------------------------- | --------------------------------------- |
+| Reference `HitScene` | retained typed VIR resource | retained FIR instance                   |
+| `SpatialHitScene`    | retained typed VIR resource | retained FIR instance, prepared in Wasm |
+
+A ten-round campaign on the same host retained every corresponding
+query sample. The ratios below are medians of paired per-query ratios;
+smaller is faster:
+
+| Workload       | FIR / VIR, reference | FIR / VIR, spatial | Spatial / reference, VIR | Spatial / reference, FIR |
+| -------------- | -------------------: | -----------------: | -----------------------: | -----------------------: |
+| `bounds-small` |               0.250× |             0.276× |                   0.890× |                   0.994× |
+| `mixed-medium` |               0.090× |             0.181× |                   0.695× |                   0.978× |
+| `paths-large`  |               0.079× |             0.146× |                   0.719× |                   1.048× |
+
+Thus FIR takes about 8–25% of VIR wall time for the reference tree and
+15–28% for the spatial tree. The spatial representation clearly lowers
+VIR wall time on mixed and path workloads. Its FIR whole-call paired
+median is near neutral because those calls are already only a few
+microseconds and fixed boundary work plus query-class mixing dominates
+the aggregate. The separate diagnostic execute ratio is 0.306× for
+`mixed-medium`, so the compiled spatial algorithm does remove Lean
+execution there; it is not yet a general FIR wall-time win.
+
+Reproduce and require all four admitted backends with:
+
+```sh
+npm run measure:hit-scene -- --suite --require-fir --require-spatial-fir
+```
+
+The showcase uses the same matrix for stored and live measurements.
+Its runtime panels compare VIR with FIR at a fixed algorithm, while
+its algorithm panels compare reference with spatial at a fixed
+runtime. Every pair has its own 1× reference marker and all bars share
+one zero-based time scale.
 
 ## Conclusions and next actions
 
 1. Keep the current retained typed-object boundary. It has removed the
    scene from the hot path and is not the dominant cost.
-2. Treat FIR as the compiled semantic control. Its 7.2× to 20.6× tier
-   speedup attributes most remaining geometry cost to VIR interpreter
+2. Treat FIR as the compiled semantic control. The complete paired
+   matrix puts FIR at 8–28% of corresponding VIR wall time and
+   attributes most remaining geometry cost to VIR interpreter
    execution rather than its retained boundary.
 3. Keep the opt-in spatial candidate: miss execution improves by 1.59×
-   to 21.51× while tagged hits are mostly neutral, and its
-   10,000-query memory/replacement gate passes. Decide whether that
-   workload tradeoff justifies making the representation
-   production-facing.
+   to 21.51× while tagged hits are mostly neutral, its 10,000-query
+   memory/replacement gate passes, and its FIR package matches all
+   1,009 queries. Decide whether that workload tradeoff justifies
+   making the representation production-facing.
 4. Treat finite-left fill bounds as a separate semantic experiment.
    They require intentionally changing the current parity-ray edge
    behavior and must not be folded into this semantics-preserving

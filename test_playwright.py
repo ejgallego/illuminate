@@ -141,6 +141,20 @@ def stage_player_assets():
             print("FIR live staging stderr:", live_result.stderr, file=sys.stderr)
             raise RuntimeError(f"FIR live staging failed:\n{live_result.stdout}")
         output += live_result.stdout
+    if os.environ.get("ILLUMINATE_FIR_SPATIAL_HIT_SCENE_DIR"):
+        spatial_result = subprocess.run(
+            ["npm", "run", "stage:fir-spatial-hit-scene"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if spatial_result.returncode != 0:
+            print("FIR spatial HitScene staging stderr:", spatial_result.stderr, file=sys.stderr)
+            raise RuntimeError(
+                f"FIR spatial HitScene staging failed:\n{spatial_result.stdout}"
+            )
+        output += spatial_result.stdout
     return output
 
 
@@ -1201,10 +1215,17 @@ def test_hit_scene_live_probe(page):
         "document.querySelector('[data-probe-toggle]').dataset.state === 'running'",
         timeout=120_000,
     )
-    expected_backends = 3 if (ROOT / "test_output" / "fir-hit-scene" / "BUILD.json").exists() else 2
+    has_fir = (ROOT / "test_output" / "fir-hit-scene" / "BUILD.json").exists()
+    has_spatial_fir = (
+        ROOT / "test_output" / "fir-spatial-hit-scene" / "BUILD.json"
+    ).exists()
+    expected_backends = 2 + int(has_fir) + int(has_spatial_fir)
+    expected_groups = 1 + int(has_fir) + int(has_spatial_fir) + int(
+        has_fir and has_spatial_fir
+    )
     assert page.locator("[data-probe-backend]").count() == expected_backends
-    assert page.locator("[data-probe-chart-group]").count() == 2
-    assert page.locator("[data-probe-chart-backend]").count() == expected_backends + 1
+    assert page.locator("[data-probe-chart-group]").count() == expected_groups
+    assert page.locator("[data-probe-chart-backend]").count() == 2 * expected_groups
     page.wait_for_function(
         "() => [...document.querySelectorAll('.probe-timing')].every(node => "
         "node.textContent.includes('batches') && node.textContent.includes('p95') && "
@@ -1213,14 +1234,14 @@ def test_hit_scene_live_probe(page):
     )
     page.wait_for_function(
         "() => [...document.querySelectorAll('[data-probe-chart-backend] output')]"
-        ".every(node => node.textContent.includes('× VIR'))",
+        ".every(node => node.textContent.includes('× '))",
         timeout=20_000,
     )
     page.wait_for_function(
         "document.querySelector('[data-probe-chart]').dataset.state === 'stable'",
         timeout=20_000,
     )
-    assert "1.00× VIR" in page.locator(
+    assert "1.00× Reference VIR" in page.locator(
         '[data-probe-chart-backend="vir"] output'
     ).first.inner_text()
     assert all(

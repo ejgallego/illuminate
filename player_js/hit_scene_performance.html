@@ -298,6 +298,9 @@
             .probe-chart-row.fir .probe-chart-track i {
                 background: #56d6a7;
             }
+            .probe-chart-row.spatialFir .probe-chart-track i {
+                background: linear-gradient(90deg, #56d6a7, #c68bd5);
+            }
             .probe-chart-track b {
                 position: absolute;
                 top: 0;
@@ -341,6 +344,9 @@
             }
             .probe-backend.fir strong {
                 color: #6ee3b8;
+            }
+            .probe-backend.spatialFir strong {
+                color: #b6e69e;
             }
             .probe-result {
                 color: #f3f6ff;
@@ -442,6 +448,12 @@
             .fir .relative-bar i {
                 background: #5bd6aa;
             }
+            .spatial .relative-bar i {
+                background: #c68bd5;
+            }
+            .spatialFir .relative-bar i {
+                background: linear-gradient(90deg, #5bd6aa, #c68bd5);
+            }
             .relative-label {
                 color: #9eb0d0;
                 font:
@@ -487,7 +499,7 @@
                 display: grid;
                 grid-template-rows: 18px minmax(0, 1fr) 14px;
                 gap: 4px;
-                width: min(44%, 48px);
+                width: min(24%, 48px);
                 text-align: center;
             }
             .phase-column output {
@@ -511,6 +523,12 @@
             }
             .phase-column.fir b {
                 background: #5bd6aa;
+            }
+            .phase-column.spatial b {
+                background: #c68bd5;
+            }
+            .phase-column.spatialFir b {
+                background: linear-gradient(#c68bd5, #5bd6aa);
             }
             .phase-group h3 {
                 color: #b9c5df;
@@ -594,7 +612,7 @@
             }
             .tier-row {
                 display: grid;
-                grid-template-columns: 34px minmax(40px, 1fr) 72px;
+                grid-template-columns: 92px minmax(40px, 1fr) 72px;
                 gap: 8px;
                 align-items: center;
                 color: #8799bc;
@@ -619,6 +637,9 @@
             }
             .tier-row.spatial b {
                 background: linear-gradient(90deg, #ad7cff, #e58bd7);
+            }
+            .tier-row.spatialFir b {
+                background: linear-gradient(90deg, #5bd6aa, #e58bd7);
             }
             .tier-row output {
                 text-align: right;
@@ -803,10 +824,10 @@
                 <h2>Live retained HitScene probe</h2>
                 <p>
                     Pointer and automatic coordinates are sent to the same retained scene through
-                    reference VIR, spatial VIR, and FIR. Geometry is a host-side visualization of
-                    the Lean-generated fixture; every displayed hit result comes from the backend.
-                    The upper chart holds the reference algorithm fixed to compare VIR with FIR; the
-                    lower chart holds VIR fixed to compare reference and spatial algorithms.
+                    reference and spatial Lean through both VIR and FIR. Geometry is a host-side
+                    visualization of the Lean-generated fixture; every displayed hit result comes
+                    from the backend. Four charts form a 2×2 comparison: each algorithm across
+                    runtimes and each runtime across algorithms.
                 </p>
                 <div class="probe-controls">
                     <button type="button" data-probe-toggle data-state="stopped">
@@ -829,7 +850,7 @@
                         <section class="probe-chart" data-probe-chart data-state="idle">
                             <header>
                                 <strong>Paired callback batches</strong>
-                                <small>shared zero scale · gold mark = Reference VIR</small>
+                                <small>shared zero scale · gold mark = each pair's reference</small>
                             </header>
                             <div class="probe-chart-rows" data-probe-chart-rows></div>
                             <small class="probe-chart-note" data-probe-chart-note>
@@ -857,11 +878,12 @@
                 <div class="phase-grid" data-phase-grid></div>
             </section>
             <section class="details">
-                <h2>FIR/VIR execution by workload</h2>
+                <h2>Runtime × algorithm execution by workload</h2>
                 <p>
                     Paired untimed production queries contrast small bounds, mixed geometry, and a
                     large path-heavy retained scene. The stored results appear on load; the live
-                    suite replaces all three. VIR and FIR bars share a local scale in each workload.
+                    suite replaces all stored values. All four bars share a local scale in each
+                    workload.
                 </p>
                 <div class="workload-grid" data-workloads></div>
             </section>
