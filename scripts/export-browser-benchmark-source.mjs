@@ -10,27 +10,76 @@ function usage() {
 
 Exports Illuminate-owned animation benchmark inputs into a fresh directory.
 
-  --source PATH       exact Illuminate checkout root
-  --toolchain NAME    exact elan toolchain; must match SOURCE/lean-toolchain
-  --output PATH       fresh caller-owned output directory
-  --allow-dirty       permit a dirty source only for local producer development`);
+  --output PATH                 fresh caller-owned output directory
+  --checkout producer=PATH      exact clean Illuminate checkout (catalog form)
+  --source PATH                 exact Illuminate checkout root (direct-use alias)
+  --toolchain NAME              exact elan toolchain for --source
+  --allow-dirty                 permit a dirty source only for local development`);
 }
 
 function parseArgs(argv) {
-    const options = { source: null, toolchain: null, output: null, allowDirty: false };
+    const options = {
+        source: null,
+        toolchain: null,
+        output: null,
+        producerCheckout: null,
+        allowDirty: false,
+    };
+    /** @param {number} index @param {string} option */
+    function valueAfter(index, option) {
+        const value = argv[index + 1];
+        if (value === undefined || value.startsWith("--")) {
+            throw new Error(`${option} requires a value`);
+        }
+        return value;
+    }
+    /** @param {"source" | "toolchain" | "output"} name @param {string} value */
+    function setOnce(name, value) {
+        if (options[name] !== null) throw new Error(`duplicate --${name}`);
+        options[name] = value;
+    }
     for (let index = 0; index < argv.length; index += 1) {
         const argument = argv[index];
-        if (argument === "--source") options.source = argv[++index];
-        else if (argument === "--toolchain") options.toolchain = argv[++index];
-        else if (argument === "--output") options.output = argv[++index];
-        else if (argument === "--allow-dirty") options.allowDirty = true;
-        else if (argument === "--help" || argument === "-h") {
+        if (argument === "--source") setOnce("source", valueAfter(index++, argument));
+        else if (argument === "--toolchain") {
+            setOnce("toolchain", valueAfter(index++, argument));
+        } else if (argument === "--output") setOnce("output", valueAfter(index++, argument));
+        else if (argument === "--checkout") {
+            const assignment = valueAfter(index++, argument);
+            const separator = assignment.indexOf("=");
+            if (separator <= 0 || separator === assignment.length - 1) {
+                throw new Error("--checkout requires ROLE=PATH");
+            }
+            const role = assignment.slice(0, separator);
+            if (role !== "producer") throw new Error(`unknown checkout role: ${role}`);
+            if (options.producerCheckout !== null) {
+                throw new Error("duplicate --checkout producer=...");
+            }
+            options.producerCheckout = assignment.slice(separator + 1);
+        } else if (argument === "--package") {
+            valueAfter(index, argument);
+            throw new Error("this source-only producer does not accept dependency packages");
+        } else if (argument === "--allow-dirty") {
+            if (options.allowDirty) throw new Error("duplicate --allow-dirty");
+            options.allowDirty = true;
+        } else if (argument === "--help" || argument === "-h") {
             usage();
             process.exit(0);
         } else throw new Error(`unknown argument: ${argument}`);
     }
-    for (const name of ["source", "toolchain", "output"]) {
-        if (!options[name]) throw new Error(`pass --${name} VALUE`);
+    if (options.output === null) throw new Error("pass --output VALUE");
+    if (options.producerCheckout !== null) {
+        if (options.source !== null) {
+            throw new Error("use either --checkout producer=PATH or --source, not both");
+        }
+        if (options.toolchain !== null) {
+            throw new Error("--checkout producer=PATH derives its toolchain; omit --toolchain");
+        }
+        options.source = options.producerCheckout;
+    } else {
+        if (options.source === null)
+            throw new Error("pass --checkout producer=PATH or --source PATH");
+        if (options.toolchain === null) throw new Error("--source requires --toolchain NAME");
     }
     return options;
 }
@@ -67,9 +116,10 @@ async function main() {
     }
     assertSourceRoot(source);
     const pinnedToolchain = (await readFile(path.join(source, "lean-toolchain"), "utf8")).trim();
-    if (options.toolchain !== pinnedToolchain) {
+    const toolchain = options.toolchain ?? pinnedToolchain;
+    if (toolchain !== pinnedToolchain) {
         throw new Error(
-            `toolchain mismatch: source pins ${pinnedToolchain}, received ${options.toolchain}`,
+            `toolchain mismatch: source pins ${pinnedToolchain}, received ${toolchain}`,
         );
     }
     const status = git(source, ["status", "--porcelain"]);
@@ -84,7 +134,7 @@ async function main() {
             "elan",
             [
                 "run",
-                options.toolchain,
+                toolchain,
                 "lake",
                 "--file",
                 "lakefile.benchmark.lean",
@@ -123,8 +173,7 @@ async function main() {
         ];
         const files = await Promise.all(payloadPaths.map((item) => fileRecord(output, item)));
         const sourceCommit = git(source, ["rev-parse", "HEAD"]);
-        const repository = git(source, ["remote", "get-url", "origin"]);
-        const leanVersion = command("elan", ["run", options.toolchain, "lean", "--version"], {
+        const leanVersion = command("elan", ["run", toolchain, "lean", "--version"], {
             capture: true,
         });
         const build = {
@@ -132,12 +181,11 @@ async function main() {
             kind: "illuminate/browser-benchmark-source",
             producerProtocol: "browser-benchmarks/source-package/v1",
             source: {
-                repository,
                 commit: sourceCommit,
                 dirty: status !== "",
             },
             toolchain: {
-                elan: options.toolchain,
+                elan: toolchain,
                 leanVersion,
             },
             workload: {
