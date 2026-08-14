@@ -130,6 +130,11 @@
     var firBuildUrl = "./fir-live/BUILD.json";
     var sampleWindowMs = 2000;
     var metrics = new Map();
+    var labParams = new URLSearchParams(window.location.search);
+    /** @type {"playback" | "analysis"} */
+    var currentView = labParams.get("view") === "analysis" ? "analysis" : "playback";
+    /** @type {"selected" | "all"} */
+    var currentScope = labParams.get("scope") === "all" ? "all" : "selected";
     /** @type {string | null} */
     var currentOwner = null;
     /** @type {HTMLInputElement | null} */
@@ -1113,6 +1118,7 @@
     if (!(status instanceof HTMLElement) || !(grid instanceof HTMLElement)) {
         throw new Error("comparison dashboard shell is incomplete");
     }
+    var dashboardStatus = status;
     var dashboardGrid = grid;
 
     try {
@@ -1214,6 +1220,23 @@
         var virTiming = /** @type {HTMLInputElement} */ (
             document.getElementById("comparison-vir-timing")
         );
+        var viewSelect = /** @type {HTMLSelectElement} */ (
+            document.getElementById("comparison-view")
+        );
+        var scopeSelect = /** @type {HTMLSelectElement} */ (
+            document.getElementById("comparison-scope")
+        );
+        /** @type {"vir-selection" | "vir-full" | "fir"} */
+        var currentBackend =
+            labParams.get("backend") === "fir" && firAdapter !== null
+                ? "fir"
+                : labParams.get("backend") === "vir-full"
+                  ? "vir-full"
+                  : "vir-selection";
+        backendSelect.value = currentBackend;
+        viewSelect.value = currentView;
+        scopeSelect.value = currentScope;
+        virTiming.checked = labParams.get("detail") === "1";
         phaseTiming = virTiming;
         function updateVirTiming() {
             var showDetailedCharts = detailedChartsEnabled();
@@ -1232,7 +1255,11 @@
             );
             if (aggregatePhases) aggregatePhases.hidden = !showDetailedCharts;
         }
-        virTiming.addEventListener("change", updateVirTiming);
+        function handleVirTimingChange() {
+            updateVirTiming();
+            syncLabUrl();
+        }
+        virTiming.addEventListener("change", handleVirTimingChange);
 
         /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
         function mountVirFullCandidate(data, index) {
@@ -1314,8 +1341,6 @@
             return mountFirIn(data, container);
         }
 
-        /** @type {"vir-selection" | "vir-full" | "fir"} */
-        var currentBackend = "vir-selection";
         updateVirTiming();
 
         /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
@@ -1441,6 +1466,8 @@
             switchBackend(
                 backend === "fir" ? "fir" : backend === "vir-full" ? "vir-full" : "vir-selection",
             );
+            updateLabStatus();
+            syncLabUrl();
         });
         updateCandidatePresentation();
 
@@ -1467,7 +1494,7 @@
             option.textContent = String(index + 1).padStart(2, "0") + " · " + example.title;
             fixtureSelect.appendChild(option);
         });
-        var requestedFixture = new URLSearchParams(window.location.search).get("fixture");
+        var requestedFixture = labParams.get("fixture");
         if (requestedFixture !== null) {
             var requestedKey = requestedFixture;
             var requestedIndex = Number.parseInt(requestedFixture, 10);
@@ -1479,6 +1506,20 @@
             if (requestedIndex >= 0 && requestedIndex < examples.length) {
                 fixtureSelect.value = String(requestedIndex);
             }
+        }
+
+        function syncLabUrl() {
+            var url = new URL(window.location.href);
+            url.searchParams.set("fixture", fixtureSelect.value);
+            url.searchParams.set("view", currentView);
+            url.searchParams.set("scope", currentScope);
+            url.searchParams.set("backend", currentBackend);
+            if (virTiming.checked) {
+                url.searchParams.set("detail", "1");
+            } else {
+                url.searchParams.delete("detail");
+            }
+            window.history.replaceState(null, "", url);
         }
 
         /** @param {string} id */
@@ -1562,9 +1603,7 @@
                     String(fixturePlayers.length) + "/4 backends ready · checking DOM parity";
                 fixtureParity.classList.remove("mismatch");
             }
-            var url = new URL(window.location.href);
-            url.searchParams.set("fixture", String(index));
-            window.history.replaceState(null, "", url);
+            syncLabUrl();
         }
 
         function advanceFocusedFixture() {
@@ -1627,7 +1666,7 @@
             var autoCycle = /** @type {HTMLInputElement} */ (
                 document.getElementById("comparison-auto-cycle")
             );
-            if (!autoCycle.checked) return;
+            if (currentView !== "playback" || !autoCycle.checked) return;
             if (snapshot.playback === "waiting") {
                 fixtureWaitingSince = fixtureWaitingSince ?? currentTime;
                 if (currentTime - fixtureWaitingSince > 700) {
@@ -1665,7 +1704,14 @@
 
         fixtureSelect.addEventListener("change", function () {
             mountFocusedFixture();
-            advanceFocusedFixture();
+            if (currentView === "playback") {
+                advanceFocusedFixture();
+            } else if (currentScope === "selected") {
+                rows.forEach(pauseRow);
+                updateAnalysisVisibility();
+                activeAnalysisRows().forEach(advanceRow);
+            }
+            updateLabStatus();
         });
         document
             .getElementById("fixture-advance")
@@ -1675,7 +1721,6 @@
             seekFocusedFixture(Number(fixtureScrub.value));
         });
         mountFocusedFixture();
-        advanceFocusedFixture();
 
         /** @param {ComparisonRow} row */
         function advanceRow(row) {
@@ -1708,6 +1753,92 @@
             });
         }
 
+        function selectedFixtureIndex() {
+            return Number(fixtureSelect.value);
+        }
+
+        /** @returns {ComparisonRow[]} */
+        function activeAnalysisRows() {
+            if (currentScope === "all") return rows;
+            var selected = selectedFixtureIndex();
+            return rows.filter(function (row) {
+                return row.index === selected;
+            });
+        }
+
+        /** @param {ComparisonRow} row */
+        function analysisIncludes(row) {
+            return currentScope === "all" || row.index === selectedFixtureIndex();
+        }
+
+        function updateAnalysisVisibility() {
+            rows.forEach(function (row) {
+                var article = /** @type {HTMLElement | null} */ (
+                    dashboardGrid.querySelector('[data-example="' + String(row.index) + '"]')
+                );
+                if (article) article.hidden = !analysisIncludes(row);
+            });
+        }
+
+        function updateLabStatus() {
+            if (currentView === "playback") {
+                dashboardStatus.textContent =
+                    String(examples.length) +
+                    " fixtures · " +
+                    String(fixturePlayers.length) +
+                    "/4 playback backends · LLVM package pending";
+            } else if (currentScope === "all") {
+                dashboardStatus.textContent =
+                    String(rows.length) +
+                    " fixtures · " +
+                    String(rows.length * 2) +
+                    " analyzer players · " +
+                    backendSelect.selectedOptions[0].textContent;
+            } else {
+                dashboardStatus.textContent =
+                    examples[selectedFixtureIndex()].title +
+                    " · 2 analyzer players · " +
+                    backendSelect.selectedOptions[0].textContent;
+            }
+        }
+
+        /** @param {"playback" | "analysis"} nextView @param {boolean} start */
+        function applyLabView(nextView, start) {
+            rows.forEach(pauseRow);
+            pauseFocusedFixture();
+            currentView = nextView;
+            viewSelect.value = currentView;
+            for (var panel of document.querySelectorAll("[data-lab-panel]")) {
+                if (panel instanceof HTMLElement) {
+                    panel.hidden = panel.dataset.labPanel !== currentView;
+                }
+            }
+            for (var control of document.querySelectorAll("[data-analysis-control]")) {
+                if (control instanceof HTMLElement) control.hidden = currentView !== "analysis";
+            }
+            updateAnalysisVisibility();
+            if (start) {
+                if (currentView === "playback") {
+                    advanceFocusedFixture();
+                } else {
+                    activeAnalysisRows().forEach(advanceRow);
+                }
+            }
+            updateLabStatus();
+            syncLabUrl();
+        }
+
+        /** @param {"selected" | "all"} nextScope */
+        function applyAnalysisScope(nextScope) {
+            rows.forEach(pauseRow);
+            currentScope = nextScope;
+            scopeSelect.value = currentScope;
+            updateAnalysisVisibility();
+            if (currentView === "analysis") activeAnalysisRows().forEach(advanceRow);
+            updateLabStatus();
+            syncLabUrl();
+        }
+
         rows.forEach(function (row) {
             var article = /** @type {HTMLElement} */ (
                 dashboardGrid.querySelector('[data-example="' + String(row.index) + '"]')
@@ -1732,20 +1863,26 @@
         var autoCycle = /** @type {HTMLInputElement} */ (
             document.getElementById("comparison-auto-cycle")
         );
+        viewSelect.addEventListener("change", function () {
+            applyLabView(viewSelect.value === "analysis" ? "analysis" : "playback", true);
+        });
+        scopeSelect.addEventListener("change", function () {
+            applyAnalysisScope(scopeSelect.value === "all" ? "all" : "selected");
+        });
         document.getElementById("comparison-start")?.addEventListener("click", function () {
-            rows.forEach(advanceRow);
+            activeAnalysisRows().forEach(advanceRow);
         });
         document.getElementById("comparison-pause")?.addEventListener("click", function () {
             autoCycle.checked = false;
-            rows.forEach(pauseRow);
+            activeAnalysisRows().forEach(pauseRow);
         });
         document.getElementById("comparison-reset")?.addEventListener("click", function () {
-            rows.forEach(function (row) {
+            activeAnalysisRows().forEach(function (row) {
                 seekRow(row, 0);
             });
         });
         document.getElementById("comparison-clear-peaks")?.addEventListener("click", function () {
-            rows.forEach(function (row) {
+            activeAnalysisRows().forEach(function (row) {
                 var jsValue = metrics.get(row.jsOwner);
                 var candidateValue = metrics.get(row.candidateOwner);
                 if (jsValue) clearPersistentMetrics(jsValue);
@@ -1796,8 +1933,11 @@
                 var candidateMetric = metricSnapshot(candidateValue, now);
                 var jsPhases = phaseSnapshot(jsValue, jsMetric.mean, now);
                 var candidatePhases = phaseSnapshot(candidateValue, candidateMetric.mean, now);
-                addPhaseAggregate(engineTotals.js.phases, jsPhases);
-                addPhaseAggregate(engineTotals.candidate.phases, candidatePhases);
+                var included = currentView === "analysis" && analysisIncludes(row);
+                if (included) {
+                    addPhaseAggregate(engineTotals.js.phases, jsPhases);
+                    addPhaseAggregate(engineTotals.candidate.phases, candidatePhases);
+                }
                 renderMetric(
                     /** @type {HTMLElement} */ (article.querySelector('[data-engine="js"]')),
                     jsMetric,
@@ -1834,24 +1974,26 @@
                     detailedChartsEnabled(),
                     currentBackend,
                 );
-                for (var pair of [
-                    ["js", jsMetric],
-                    ["candidate", candidateMetric],
-                ]) {
-                    var engine = /** @type {"js" | "candidate"} */ (pair[0]);
-                    var value = /** @type {ReturnType<typeof metricSnapshot>} */ (pair[1]);
-                    engineTotals[engine].fps += value.fps;
-                    engineTotals[engine].cpu += value.cpuPercent;
-                    if (value.fps > 0) {
-                        engineTotals[engine].mean += value.mean;
-                        engineTotals[engine].active += 1;
-                    }
-                    engineTotals[engine].slowCallbacks += value.longFrames;
-                    if (value.maximum > engineTotals[engine].maximum) {
-                        engineTotals[engine].maximum = value.maximum;
-                        engineTotals[engine].maximumAt = value.maximumAt;
-                        engineTotals[engine].maximumCallback = value.maximumCallback;
-                        engineTotals[engine].peakTitle = examples[row.index].title;
+                if (included) {
+                    for (var pair of [
+                        ["js", jsMetric],
+                        ["candidate", candidateMetric],
+                    ]) {
+                        var engine = /** @type {"js" | "candidate"} */ (pair[0]);
+                        var value = /** @type {ReturnType<typeof metricSnapshot>} */ (pair[1]);
+                        engineTotals[engine].fps += value.fps;
+                        engineTotals[engine].cpu += value.cpuPercent;
+                        if (value.fps > 0) {
+                            engineTotals[engine].mean += value.mean;
+                            engineTotals[engine].active += 1;
+                        }
+                        engineTotals[engine].slowCallbacks += value.longFrames;
+                        if (value.maximum > engineTotals[engine].maximum) {
+                            engineTotals[engine].maximum = value.maximum;
+                            engineTotals[engine].maximumAt = value.maximumAt;
+                            engineTotals[engine].maximumCallback = value.maximumCallback;
+                            engineTotals[engine].peakTitle = examples[row.index].title;
+                        }
                     }
                 }
                 var snapshot = row.legacy.snapshot();
@@ -1881,7 +2023,7 @@
                     domMatch.classList.toggle("mismatch", !match);
                 }
 
-                if (autoCycle.checked) {
+                if (autoCycle.checked && included) {
                     if (snapshot.playback === "waiting") {
                         row.waitingSince = row.waitingSince ?? now;
                         if (now - row.waitingSince > 700) {
@@ -1982,6 +2124,9 @@
         window.__illuminateComparisonSnapshot = function () {
             var now = performance.now();
             return {
+                view: currentView,
+                scope: currentScope,
+                fixture: selectedFixtureIndex(),
                 backend: currentBackend,
                 firAvailable: firAdapter !== null,
                 timingEnabled: virTiming.checked,
@@ -2015,23 +2160,16 @@
             refreshDashboard();
         };
 
-        status.textContent =
-            String(rows.length) +
-            " examples · " +
-            String(rows.length * 2) +
-            " analyzer players · " +
-            String(fixturePlayers.length) +
-            "/4 focused backends · LLVM package pending";
         status.dataset.state = "ready";
         document.body.dataset.ready = "true";
-        rows.forEach(advanceRow);
+        applyLabView(currentView, true);
         var refreshTimer = setInterval(refreshDashboard, 250);
 
         window.addEventListener(
             "pagehide",
             function () {
                 clearInterval(refreshTimer);
-                virTiming.removeEventListener("change", updateVirTiming);
+                virTiming.removeEventListener("change", handleVirTimingChange);
                 runtime.setCallbackTimingObserver(null);
                 disposeFixturePlayers();
                 rows.forEach(function (row) {

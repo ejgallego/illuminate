@@ -827,7 +827,7 @@ p \{ color: #888; font-size: 14px; }
       IO.FS.writeFile "test_output/anim-comparison.html" html
       assertTrue (animationExampleCatalogue.size == 16)
         "comparison dashboard includes every #animate example"
-      assertContains html "JavaScript and Lean, frame for frame"
+      assertContains html "One animation, every runtime"
         "comparison dashboard has its heading"
       IO.println s!"  → wrote test_output/anim-comparison.html ({html.length} bytes)")
   ]

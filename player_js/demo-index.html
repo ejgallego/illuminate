@@ -33,13 +33,13 @@
                 letter-spacing: 0.12em;
                 text-transform: uppercase;
             }
-            .primary,
-            .fixtures {
+            .primary {
                 display: grid;
                 grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
                 gap: 14px;
             }
-            a {
+            .primary > a,
+            .lab-card {
                 display: block;
                 padding: 22px;
                 color: inherit;
@@ -51,27 +51,48 @@
                     transform 120ms ease,
                     border-color 120ms ease;
             }
-            a:hover {
+            .primary > a:hover,
+            .lab-card:hover {
                 border-color: #7697ee;
                 transform: translateY(-2px);
             }
-            a strong {
+            .primary > a strong,
+            .lab-card > a strong {
                 display: block;
                 font-size: 1.1rem;
             }
-            a span {
+            .primary > a span,
+            .lab-card > span {
                 display: block;
                 margin-top: 7px;
                 color: #93a3c7;
                 font-size: 0.86rem;
                 line-height: 1.45;
             }
-            .fixtures a {
-                padding: 14px 16px;
-                border-radius: 10px;
+            .lab-card > a {
+                color: inherit;
+                text-decoration: none;
             }
-            .fixtures a strong {
-                font-size: 0.92rem;
+            .presets {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+                margin-top: 18px;
+                padding-top: 16px;
+                border-top: 1px solid #2b3b61;
+            }
+            .presets a {
+                padding: 7px 10px;
+                color: #b9c9ee;
+                font-size: 0.78rem;
+                text-decoration: none;
+                background: #1b2847;
+                border: 1px solid #354b78;
+                border-radius: 999px;
+            }
+            .presets a:hover {
+                color: #fff;
+                border-color: #7697ee;
             }
         </style>
     </head>
@@ -86,37 +107,30 @@
 
         <h2>Main comparisons</h2>
         <main class="primary">
-            <a href="anim-comparison.html">
-                <strong>Animation runtime comparison</strong>
+            <article class="lab-card">
+                <a href="anim-comparison.html?view=playback">
+                    <strong>Animation Lab</strong>
+                </a>
                 <span>
-                    Select one of 16 fixtures and run JavaScript, VIR, FIR, and LLVM slots together;
-                    the detailed paired analyzer remains below.
+                    One fixture selector, four playback slots, and a detailed JavaScript/Lean
+                    analyzer with selected-fixture and all-fixture campaign scopes.
                 </span>
-            </a>
+                <nav class="presets" aria-label="Animation Lab presets">
+                    <a href="anim-comparison.html?fixture=4&amp;view=playback">Pause and seek</a>
+                    <a href="anim-comparison.html?fixture=7&amp;view=playback">Loop exit</a>
+                    <a href="anim-comparison.html?fixture=10&amp;view=playback"
+                        >Segment replacement</a
+                    >
+                    <a href="anim-comparison.html?fixture=15&amp;view=playback">Text patching</a>
+                    <a href="anim-comparison.html?view=analysis&amp;scope=all"
+                        >All-fixture analysis</a
+                    >
+                </nav>
+            </article>
             <a href="hit-scene-performance.html">
                 <strong>HitScene performance</strong>
                 <span>Tiered retained Lean geometry workloads through VIR and FIR.</span>
             </a>
         </main>
-
-        <h2>Animation fixtures</h2>
-        <section class="fixtures">
-            <a href="anim-comparison.html?fixture=4#fixture-matrix">
-                <strong>Pause and seek</strong>
-                <span>Four backend slots, one pause-driven slide show.</span>
-            </a>
-            <a href="anim-comparison.html?fixture=7#fixture-matrix">
-                <strong>Loop exit</strong>
-                <span>Compare loop completion and the transition into the final step.</span>
-            </a>
-            <a href="anim-comparison.html?fixture=10#fixture-matrix">
-                <strong>Segment replacement</strong>
-                <span>Exercise structural SVG changes in a nested morph.</span>
-            </a>
-            <a href="anim-comparison.html?fixture=15#fixture-matrix">
-                <strong>Text patching</strong>
-                <span>Compare multiline text-content updates across all ready backends.</span>
-            </a>
-        </section>
     </body>
 </html>

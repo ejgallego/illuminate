@@ -317,7 +317,10 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, **chromium_options())
             observations = []
-            url = f"http://127.0.0.1:{server.server_address[1]}/{html.name}"
+            url = (
+                f"http://127.0.0.1:{server.server_address[1]}/{html.name}"
+                "?view=analysis&scope=all"
+            )
             for round_index in range(args.runs):
                 order = (
                     ["vir-selection", "vir-full", "fir"]

@@ -129,7 +129,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--url",
-        default="http://127.0.0.1:8765/anim-comparison.html",
+        default=(
+            "http://127.0.0.1:8765/anim-comparison.html"
+            "?view=analysis&scope=all"
+        ),
     )
     parser.add_argument("--row", type=int, default=13)
     parser.add_argument("--runs", type=int, default=5)

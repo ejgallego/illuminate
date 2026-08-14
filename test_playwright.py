@@ -955,7 +955,7 @@ def test_standalone_player_dual_animation_independence(page):
 
 
 def test_animation_comparison_dashboard(page):
-    """The dashboard should mount every example twice and report common runtime statistics."""
+    """The Animation Lab should share fixture state across playback and analysis views."""
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.goto(_test_output_url("anim-comparison.html"))
@@ -963,9 +963,10 @@ def test_animation_comparison_dashboard(page):
 
     assert page.locator(".example").count() == 16
     assert page.locator("#comparison-grid .stage svg").count() == 32
-    assert "16 examples · 32 analyzer players" in page.locator(
-        "#comparison-status"
-    ).inner_text()
+    assert page.locator("#comparison-view").input_value() == "playback"
+    assert page.locator('[data-lab-panel="playback"]').is_visible()
+    assert not page.locator('[data-lab-panel="analysis"]').is_visible()
+    assert "playback backends" in page.locator("#comparison-status").inner_text()
     assert page.locator("#comparison-backend").input_value() == "vir-selection"
     assert page.evaluate("typeof window.__illuminateComparisonResetMetrics") == "function"
     assert page.locator(".sticky-peaks").count() == 1
@@ -1004,6 +1005,20 @@ def test_animation_comparison_dashboard(page):
         "document.querySelector('#fixture-frame').textContent.startsWith('4 / ')"
     )
     assert "DOM match" in page.locator("[data-fixture-parity]").inner_text()
+    assert "fixture=7" in page.url
+
+    page.locator("#comparison-view").select_option("analysis")
+    page.locator("#comparison-scope").select_option("all")
+    page.wait_for_function(
+        "document.querySelectorAll('#comparison-grid .example:not([hidden])').length === 16"
+    )
+    assert not page.locator('[data-lab-panel="playback"]').is_visible()
+    assert page.locator('[data-lab-panel="analysis"]').is_visible()
+    assert "16 fixtures · 32 analyzer players" in page.locator(
+        "#comparison-status"
+    ).inner_text()
+    assert "view=analysis" in page.url
+    assert "scope=all" in page.url
 
     page.wait_for_function(
         """() => [...document.querySelectorAll('[data-summary-stat=fps]')]
@@ -1198,6 +1213,13 @@ def test_animation_comparison_dashboard(page):
     reset_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
     assert all(row["callback"]["totalCallbacks"] == 0 for row in reset_snapshot["rows"])
     assert all(row["phases"]["samples"] == 0 for row in reset_snapshot["rows"])
+    page.locator("#comparison-scope").select_option("selected")
+    assert page.locator("#comparison-grid .example:visible").count() == 1
+    selected_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert selected_snapshot["view"] == "analysis"
+    assert selected_snapshot["scope"] == "selected"
+    assert selected_snapshot["fixture"] == 7
+    assert "scope=selected" in page.url
     assert errors == []
 
 

@@ -263,7 +263,7 @@ def renderAnimationComparisonHTML
 <head>
 <meta charset=\"utf-8\">
 <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-<title>Illuminate · JavaScript / Lean runtime comparison</title>
+<title>Illuminate Animation Lab</title>
 <style>
 :root \{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, sans-serif; background: #0b1020; color: #ecf1ff; }
 * \{ box-sizing: border-box; }
@@ -273,6 +273,7 @@ body \{ margin: 0; min-width: 320px; background: radial-gradient(circle at 20% 0
 h1 \{ margin: 0; max-width: 900px; font-size: clamp(32px, 5vw, 64px); line-height: .98; letter-spacing: -.045em; }
 .lede \{ max-width: 780px; margin: 20px 0 0; color: #aebbd9; font-size: 16px; line-height: 1.65; }
 .toolbar \{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 14px clamp(18px, 5vw, 72px); background: #0b1020; border-bottom: 1px solid #263458; }
+[data-lab-panel][hidden], [data-analysis-control][hidden] \{ display: none !important; }
 button \{ padding: 9px 14px; border: 1px solid #4a6fca; border-radius: 8px; background: #3158b2; color: white; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; }
 button:hover \{ background: #3b67cb; }
 button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
@@ -280,6 +281,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .auto.cycle \{ margin-right: auto; }
 .auto input \{ accent-color: #6c91eb; }
 .auto select \{ padding: 5px 7px; border: 1px solid #344362; border-radius: 6px; background: #172039; color: #c6d0e7; }
+.toolbar #fixture-select \{ max-width: min(340px, 72vw); }
 .profiling-toggle span \{ color: #8292b3; font-size: 11px; }
 #comparison-status \{ color: #8ea2c7; font-size: 12px; }
 .fixture-focus \{ width: min(100% - 36px, 1320px); margin: 22px auto; overflow: hidden; background: #11192d; border: 1px solid #2a3a61; border-radius: 16px; box-shadow: 0 16px 52px rgb(0 0 0 / .2); }
@@ -408,21 +410,24 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 </head>
 <body data-ready=\"false\">
 <header class=\"hero\">
-  <p class=\"eyebrow\">Illuminate runtime laboratory</p>
-  <h1>JavaScript and Lean, frame for frame.</h1>
-  <p class=\"lede\">Every example below receives the same generated animation data and synchronized commands. The JavaScript player runs the original algorithm; the candidate runs the Lean state machine through selection-only VIR, full VIR, or a staged FIR package.</p>
+  <p class=\"eyebrow\">Illuminate Animation Lab</p>
+  <h1>One animation, every runtime.</h1>
+  <p class=\"lede\">Play one fixture across every ready backend, then inspect the same JavaScript and Lean execution side by side. The selected fixture, view, campaign scope, backend, and timing mode are shareable URL state.</p>
 </header>
 <nav class=\"toolbar\" aria-label=\"Comparison controls\">
-  <button id=\"comparison-start\" type=\"button\">Play / advance all</button>
-  <button id=\"comparison-pause\" class=\"quiet\" type=\"button\">Pause all</button>
-  <button id=\"comparison-reset\" class=\"quiet\" type=\"button\">Reset all</button>
+  <label class=\"auto\">View <select id=\"comparison-view\"><option value=\"playback\">Side-by-side playback</option><option value=\"analysis\">Detailed runtime analysis</option></select></label>
+  <label class=\"auto\">Fixture <select id=\"fixture-select\" aria-label=\"Animation fixture\"></select></label>
+  <label class=\"auto\" data-analysis-control hidden>Scope <select id=\"comparison-scope\"><option value=\"selected\">Selected fixture</option><option value=\"all\">All 16 fixtures</option></select></label>
+  <button id=\"comparison-start\" data-analysis-control hidden type=\"button\">Play / advance scope</button>
+  <button id=\"comparison-pause\" data-analysis-control hidden class=\"quiet\" type=\"button\">Pause scope</button>
+  <button id=\"comparison-reset\" data-analysis-control hidden class=\"quiet\" type=\"button\">Reset scope</button>
   <label class=\"auto cycle\"><input id=\"comparison-auto-cycle\" type=\"checkbox\" checked> Auto-cycle pauses and completed animations</label>
-  <label class=\"auto\">Candidate backend <select id=\"comparison-backend\"><option value=\"vir-selection\">Lean · VIR selection</option><option value=\"vir-full\">Lean · VIR full</option><option value=\"fir\" disabled>Lean · FIR selection — persistent package required</option></select></label>
-  <label class=\"auto profiling-toggle\"><input id=\"comparison-vir-timing\" type=\"checkbox\" aria-controls=\"comparison-grid aggregate-phases\" aria-expanded=\"false\"> Detailed callback phases <span>adds measurement overhead</span></label>
+  <label class=\"auto\" data-analysis-control hidden>Candidate backend <select id=\"comparison-backend\"><option value=\"vir-selection\">Lean · VIR selection</option><option value=\"vir-full\">Lean · VIR full</option><option value=\"fir\" disabled>Lean · FIR selection — persistent package required</option></select></label>
+  <label class=\"auto profiling-toggle\" data-analysis-control hidden><input id=\"comparison-vir-timing\" type=\"checkbox\" aria-controls=\"comparison-grid aggregate-phases\" aria-expanded=\"false\"> Detailed callback phases <span>adds measurement overhead</span></label>
   <span id=\"comparison-status\" data-state=\"loading\">Loading one shared VIR runtime…</span>
 </nav>
-<section class=\"fixture-focus\" id=\"fixture-matrix\" aria-label=\"Four-backend animation fixture\">
-  <header><div><h2>One fixture · four backends</h2><p>All ready players receive the same commands. Missing compiler artifacts remain visible as unavailable slots.</p></div><select id=\"fixture-select\" aria-label=\"Animation fixture\"></select></header>
+<section class=\"fixture-focus\" id=\"fixture-matrix\" data-lab-panel=\"playback\" aria-label=\"Four-backend animation fixture\">
+  <header><div><h2>Selected fixture · four backend slots</h2><p>All ready players receive the same commands. Missing compiler artifacts remain visible as unavailable slots.</p></div></header>
   <div class=\"fixture-matrix\">
     <article class=\"fixture-backend\" data-fixture-backend=\"js\" data-state=\"loading\"><h3><span class=\"engine-dot js\"></span>JavaScript <em data-fixture-state>loading</em></h3><div class=\"stage\" data-fixture-stage=\"js\"></div></article>
     <article class=\"fixture-backend\" data-fixture-backend=\"vir\" data-state=\"loading\"><h3><span class=\"engine-dot vir\"></span>Lean · VIR <em data-fixture-state>loading</em></h3><div class=\"stage\" data-fixture-stage=\"vir\"></div></article>
@@ -431,6 +436,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
   </div>
   <footer><button id=\"fixture-advance\" type=\"button\">Play / advance</button><button id=\"fixture-pause\" class=\"quiet\" type=\"button\">Pause</button><input id=\"fixture-scrub\" type=\"range\" min=\"0\" value=\"0\" aria-label=\"Shared focused animation frame\"><output id=\"fixture-frame\">0 / 0</output><span data-fixture-parity>waiting for players</span></footer>
 </section>
+<div data-lab-panel=\"analysis\" hidden>
 <section class=\"sticky-peaks\" aria-label=\"Persistent callback peaks\">
   <span class=\"js\"><b>JS run peak</b><strong data-sticky-peak=\"js\">—</strong><small data-sticky-peak-detail=\"js\">waiting for callbacks</small></span>
   <span class=\"candidate\"><b><span data-sticky-candidate-name>VIR selection</span> peak</b><strong data-sticky-peak=\"candidate\">—</strong><small data-sticky-peak-detail=\"candidate\">waiting for callbacks</small></span>
@@ -459,6 +465,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 </section>
 <main id=\"comparison-grid\"></main>
 <p class=\"method\">FPS, CPU, mean, and p95 use a rolling two-second window. Run peaks and slow-callback totals persist until cleared or the candidate backend changes. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Each overhead badge divides candidate mean callback time by the JavaScript player beside it; its gold marker is 1× and its bar is capped at 10×. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
+</div>
 <script type=\"module\">
 {js}
 </script>
