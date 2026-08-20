@@ -107,11 +107,12 @@
  * @typedef {{
  *   index: number,
  *   data: AnimData,
- *   legacy: LegacyPlayer,
- *   candidate: ComparisonCandidate,
+ *   legacy: LegacyPlayer | null,
+ *   candidate: ComparisonCandidate | null,
  *   jsOwner: string,
  *   candidateOwner: string,
  *   candidateFirst: boolean,
+ *   savedFrame: number,
  *   waitingSince: number | null,
  *   loopSince: number | null,
  *   finishedSince: number | null
@@ -1351,37 +1352,20 @@
         }
 
         /** @type {ComparisonRow[]} */
-        var rows = [];
-
-        examples.forEach(function (example, index) {
-            var article = /** @type {HTMLElement} */ (
-                dashboardGrid.querySelector('[data-example="' + String(index) + '"]')
-            );
-            var jsStage = /** @type {HTMLElement} */ (article.querySelector('[data-stage="js"]'));
-            var jsOwner = "js-" + String(index);
-            var candidateOwner = currentBackend + "-" + String(index);
-            registerMetrics(jsOwner, "js");
-            registerMetrics(candidateOwner, currentBackend === "fir" ? "fir" : "vir");
-            var legacy = withOwner(jsOwner, function () {
-                return mountLegacy(example.data, jsStage, recordJsSelectionTiming, function () {
-                    return Boolean(phaseTiming?.checked);
-                });
-            });
-            var candidate = withOwner(candidateOwner, function () {
-                return mountCandidate(example.data, index);
-            });
-            rows.push({
+        var rows = examples.map(function (example, index) {
+            return {
                 index: index,
                 data: example.data,
-                legacy: legacy,
-                candidate: candidate,
-                jsOwner: jsOwner,
-                candidateOwner: candidateOwner,
+                legacy: null,
+                candidate: null,
+                jsOwner: "js-" + String(index),
+                candidateOwner: currentBackend + "-" + String(index),
                 candidateFirst: index % 2 === 1,
+                savedFrame: 0,
                 waitingSince: null,
                 loopSince: null,
                 finishedSince: null,
-            });
+            };
         });
 
         function updateCandidatePresentation() {
@@ -1427,37 +1411,16 @@
                 backendSelect.value = currentBackend;
                 return;
             }
-            rows.forEach(function (row) {
-                withOwner(row.jsOwner, row.legacy.pause);
-            });
-            var snapshots = rows.map(function (row) {
-                return row.legacy.snapshot();
-            });
-            rows.forEach(function (row) {
-                withOwner(row.candidateOwner, row.candidate.dispose);
-                metrics.delete(row.candidateOwner);
+            var mounted = mountedAnalysisRows();
+            mounted.forEach(pauseRow);
+            mounted.forEach(function (row) {
+                if (row.legacy) row.savedFrame = row.legacy.snapshot().frame;
+                disposeAnalysisCandidate(row);
                 registerMetrics(row.jsOwner, "js");
-                var article = dashboardGrid.querySelector(
-                    '[data-example="' + String(row.index) + '"]',
-                );
-                article?.querySelector('[data-stage="candidate"]')?.replaceChildren();
             });
             currentBackend = backend;
             updateVirTiming();
-            rows.forEach(function (row, index) {
-                row.candidateOwner = currentBackend + "-" + String(row.index);
-                registerMetrics(row.candidateOwner, currentBackend === "fir" ? "fir" : "vir");
-                row.candidate = withOwner(row.candidateOwner, function () {
-                    return mountCandidate(row.data, row.index);
-                });
-                withOwner(row.candidateOwner, function () {
-                    row.candidate.seek(snapshots[index].frame);
-                });
-                row.waitingSince = null;
-                row.loopSince = null;
-                row.finishedSince = null;
-                row.candidateFirst = row.index % 2 === 1;
-            });
+            mounted.forEach(mountAnalysisCandidate);
             updateCandidatePresentation();
         }
 
@@ -1481,6 +1444,12 @@
         var fixtureParity = document.querySelector("[data-fixture-parity]");
         /** @type {Array<{ id: string, player: LegacyPlayer | ComparisonCandidate }>} */
         var fixturePlayers = [];
+        /** @type {number[]} */
+        var fixtureSavedFrames = examples.map(function () {
+            return 0;
+        });
+        /** @type {number | null} */
+        var fixtureMountedIndex = null;
         /** @type {number | null} */
         var fixtureWaitingSince = null;
         /** @type {number | null} */
@@ -1536,7 +1505,7 @@
             );
         }
 
-        /** @param {string} id @param {"ready" | "unavailable" | "error"} state @param {string} message */
+        /** @param {string} id @param {"ready" | "unavailable" | "error" | "inactive"} state @param {string} message */
         function setFixtureState(id, state, message) {
             var card = fixtureCard(id);
             card.dataset.state = state;
@@ -1545,10 +1514,22 @@
         }
 
         function disposeFixturePlayers() {
-            fixturePlayers.reverse().forEach(function (entry) {
-                entry.player.dispose();
-            });
+            var snapshot = focusedFixtureSnapshot();
+            if (snapshot && fixtureMountedIndex !== null) {
+                fixtureSavedFrames[fixtureMountedIndex] = snapshot.frame;
+            }
+            fixturePlayers
+                .slice()
+                .reverse()
+                .forEach(function (entry) {
+                    entry.player.dispose();
+                });
             fixturePlayers = [];
+            fixtureMountedIndex = null;
+            for (var id of ["js", "vir", "fir"]) {
+                fixtureStage(id).replaceChildren();
+                setFixtureState(id, "inactive", "inactive");
+            }
         }
 
         /** @param {string} id @param {() => LegacyPlayer | ComparisonCandidate} mount */
@@ -1578,7 +1559,6 @@
             var index = Number(fixtureSelect.value);
             var example = examples[index];
             if (!example) throw new Error("focused animation fixture is missing");
-            for (var id of ["js", "vir", "fir"]) fixtureStage(id).replaceChildren();
             mountFixturePlayer("js", function () {
                 return mountLegacy(example.data, fixtureStage("js"));
             });
@@ -1593,10 +1573,14 @@
                     return mountFirIn(example.data, fixtureStage("fir"));
                 });
             }
+            fixtureMountedIndex = index;
+            var restoredFrame = fixtureSavedFrames[index] ?? 0;
+            seekFocusedFixture(restoredFrame);
             fixtureScrub.max = String(example.data.totalFrames - 1);
-            fixtureScrub.value = "0";
+            fixtureScrub.value = String(restoredFrame);
             if (fixtureFrame) {
-                fixtureFrame.textContent = "0 / " + String(example.data.totalFrames - 1);
+                fixtureFrame.textContent =
+                    String(restoredFrame) + " / " + String(example.data.totalFrames - 1);
             }
             if (fixtureParity) {
                 fixtureParity.textContent =
@@ -1703,14 +1687,15 @@
         }
 
         fixtureSelect.addEventListener("change", function () {
-            mountFocusedFixture();
             if (currentView === "playback") {
+                mountFocusedFixture();
                 advanceFocusedFixture();
             } else if (currentScope === "selected") {
-                rows.forEach(pauseRow);
+                disposeAllAnalysisRows();
                 updateAnalysisVisibility();
-                activeAnalysisRows().forEach(advanceRow);
+                mountActiveAnalysisRows(true);
             }
+            syncLabUrl();
             updateLabStatus();
         });
         document
@@ -1720,37 +1705,151 @@
         fixtureScrub.addEventListener("input", function () {
             seekFocusedFixture(Number(fixtureScrub.value));
         });
-        mountFocusedFixture();
+
+        /** @param {ComparisonRow} row */
+        function analysisArticle(row) {
+            return /** @type {HTMLElement} */ (
+                dashboardGrid.querySelector('[data-example="' + String(row.index) + '"]')
+            );
+        }
+
+        /** @param {ComparisonRow} row */
+        function mountAnalysisLegacy(row) {
+            if (row.legacy !== null) return;
+            var stage = /** @type {HTMLElement} */ (
+                analysisArticle(row).querySelector('[data-stage="js"]')
+            );
+            stage.replaceChildren();
+            row.jsOwner = "js-" + String(row.index);
+            registerMetrics(row.jsOwner, "js");
+            row.legacy = withOwner(row.jsOwner, function () {
+                return mountLegacy(row.data, stage, recordJsSelectionTiming, function () {
+                    return Boolean(phaseTiming?.checked);
+                });
+            });
+            if (row.savedFrame > 0) {
+                var legacy = row.legacy;
+                withOwner(row.jsOwner, function () {
+                    legacy.seek(row.savedFrame);
+                });
+            }
+        }
+
+        /** @param {ComparisonRow} row */
+        function mountAnalysisCandidate(row) {
+            if (row.candidate !== null) return;
+            analysisArticle(row).querySelector('[data-stage="candidate"]')?.replaceChildren();
+            row.candidateOwner = currentBackend + "-" + String(row.index);
+            registerMetrics(row.candidateOwner, currentBackend === "fir" ? "fir" : "vir");
+            row.candidate = withOwner(row.candidateOwner, function () {
+                return mountCandidate(row.data, row.index);
+            });
+            if (row.savedFrame > 0) {
+                var candidate = row.candidate;
+                withOwner(row.candidateOwner, function () {
+                    candidate.seek(row.savedFrame);
+                });
+            }
+            row.waitingSince = null;
+            row.loopSince = null;
+            row.finishedSince = null;
+            row.candidateFirst = row.index % 2 === 1;
+        }
+
+        /** @param {ComparisonRow} row */
+        function mountAnalysisRow(row) {
+            mountAnalysisLegacy(row);
+            try {
+                mountAnalysisCandidate(row);
+            } catch (error) {
+                disposeAnalysisRow(row);
+                throw error;
+            }
+        }
+
+        /** @param {ComparisonRow} row */
+        function disposeAnalysisCandidate(row) {
+            if (row.candidate !== null) {
+                withOwner(row.candidateOwner, row.candidate.dispose);
+                row.candidate = null;
+            }
+            metrics.delete(row.candidateOwner);
+            analysisArticle(row).querySelector('[data-stage="candidate"]')?.replaceChildren();
+        }
+
+        /** @param {ComparisonRow} row */
+        function disposeAnalysisRow(row) {
+            if (row.legacy !== null) row.savedFrame = row.legacy.snapshot().frame;
+            disposeAnalysisCandidate(row);
+            if (row.legacy !== null) {
+                withOwner(row.jsOwner, row.legacy.dispose);
+                row.legacy = null;
+            }
+            metrics.delete(row.jsOwner);
+            analysisArticle(row).querySelector('[data-stage="js"]')?.replaceChildren();
+            row.waitingSince = null;
+            row.loopSince = null;
+            row.finishedSince = null;
+        }
+
+        /** @returns {ComparisonRow[]} */
+        function mountedAnalysisRows() {
+            return rows.filter(function (row) {
+                return row.legacy !== null || row.candidate !== null;
+            });
+        }
+
+        function disposeAllAnalysisRows() {
+            mountedAnalysisRows().forEach(disposeAnalysisRow);
+        }
+
+        /** @param {boolean} start */
+        function mountActiveAnalysisRows(start) {
+            activeAnalysisRows().forEach(mountAnalysisRow);
+            if (start) activeAnalysisRows().forEach(advanceRow);
+        }
 
         /** @param {ComparisonRow} row */
         function advanceRow(row) {
             // requestAnimationFrame preserves registration order closely enough that the
             // second renderer can benefit from warm browser and JavaScript state. Balance
             // that order across rows and reverse it whenever a row is scheduled again.
+            var legacy = row.legacy;
+            var candidate = row.candidate;
+            if (legacy === null || candidate === null) return;
             if (row.candidateFirst) {
-                withOwner(row.candidateOwner, row.candidate.advance);
-                withOwner(row.jsOwner, row.legacy.advance);
+                withOwner(row.candidateOwner, candidate.advance);
+                withOwner(row.jsOwner, legacy.advance);
             } else {
-                withOwner(row.jsOwner, row.legacy.advance);
-                withOwner(row.candidateOwner, row.candidate.advance);
+                withOwner(row.jsOwner, legacy.advance);
+                withOwner(row.candidateOwner, candidate.advance);
             }
             row.candidateFirst = !row.candidateFirst;
         }
 
         /** @param {ComparisonRow} row */
         function pauseRow(row) {
-            withOwner(row.jsOwner, row.legacy.pause);
-            withOwner(row.candidateOwner, row.candidate.pause);
+            if (row.legacy !== null) withOwner(row.jsOwner, row.legacy.pause);
+            if (row.candidate !== null) withOwner(row.candidateOwner, row.candidate.pause);
         }
 
         /** @param {ComparisonRow} row @param {number} frame */
         function seekRow(row, frame) {
-            withOwner(row.jsOwner, function () {
-                row.legacy.seek(frame);
-            });
-            withOwner(row.candidateOwner, function () {
-                row.candidate.seek(frame);
-            });
+            row.savedFrame = frame;
+            var legacy = row.legacy;
+            var candidate = row.candidate;
+            if (legacy !== null) {
+                var mountedLegacy = legacy;
+                withOwner(row.jsOwner, function () {
+                    mountedLegacy.seek(frame);
+                });
+            }
+            if (candidate !== null) {
+                var mountedCandidate = candidate;
+                withOwner(row.candidateOwner, function () {
+                    mountedCandidate.seek(frame);
+                });
+            }
         }
 
         function selectedFixtureIndex() {
@@ -1791,7 +1890,7 @@
                 dashboardStatus.textContent =
                     String(rows.length) +
                     " fixtures · " +
-                    String(rows.length * 2) +
+                    String(mountedAnalysisRows().length * 2) +
                     " analyzer players · " +
                     backendSelect.selectedOptions[0].textContent;
             } else {
@@ -1804,8 +1903,8 @@
 
         /** @param {"playback" | "analysis"} nextView @param {boolean} start */
         function applyLabView(nextView, start) {
-            rows.forEach(pauseRow);
-            pauseFocusedFixture();
+            disposeAllAnalysisRows();
+            disposeFixturePlayers();
             currentView = nextView;
             viewSelect.value = currentView;
             for (var panel of document.querySelectorAll("[data-lab-panel]")) {
@@ -1817,12 +1916,11 @@
                 if (control instanceof HTMLElement) control.hidden = currentView !== "analysis";
             }
             updateAnalysisVisibility();
-            if (start) {
-                if (currentView === "playback") {
-                    advanceFocusedFixture();
-                } else {
-                    activeAnalysisRows().forEach(advanceRow);
-                }
+            if (currentView === "playback") {
+                mountFocusedFixture();
+                if (start) advanceFocusedFixture();
+            } else {
+                mountActiveAnalysisRows(start);
             }
             updateLabStatus();
             syncLabUrl();
@@ -1830,11 +1928,11 @@
 
         /** @param {"selected" | "all"} nextScope */
         function applyAnalysisScope(nextScope) {
-            rows.forEach(pauseRow);
+            disposeAllAnalysisRows();
             currentScope = nextScope;
             scopeSelect.value = currentScope;
             updateAnalysisVisibility();
-            if (currentView === "analysis") activeAnalysisRows().forEach(advanceRow);
+            if (currentView === "analysis") mountActiveAnalysisRows(true);
             updateLabStatus();
             syncLabUrl();
         }
@@ -1928,7 +2026,8 @@
                 if (!(article instanceof HTMLElement)) return;
                 var jsValue = metrics.get(row.jsOwner);
                 var candidateValue = metrics.get(row.candidateOwner);
-                if (!jsValue || !candidateValue) return;
+                var legacyPlayer = row.legacy;
+                if (!jsValue || !candidateValue || legacyPlayer === null) return;
                 var jsMetric = metricSnapshot(jsValue, now);
                 var candidateMetric = metricSnapshot(candidateValue, now);
                 var jsPhases = phaseSnapshot(jsValue, jsMetric.mean, now);
@@ -1996,7 +2095,7 @@
                         }
                     }
                 }
-                var snapshot = row.legacy.snapshot();
+                var snapshot = legacyPlayer.snapshot();
                 var scrubber = /** @type {HTMLInputElement} */ (
                     article.querySelector('input[type="range"]')
                 );
@@ -2123,6 +2222,7 @@
 
         window.__illuminateComparisonSnapshot = function () {
             var now = performance.now();
+            var mountedRows = mountedAnalysisRows();
             return {
                 view: currentView,
                 scope: currentScope,
@@ -2130,6 +2230,12 @@
                 backend: currentBackend,
                 firAvailable: firAdapter !== null,
                 timingEnabled: virTiming.checked,
+                ownership: {
+                    fixturePlayers: fixturePlayers.length,
+                    analyzerRows: mountedRows.length,
+                    analyzerPlayers: mountedRows.length * 2,
+                    totalPlayers: fixturePlayers.length + mountedRows.length * 2,
+                },
                 rows: rows.map(function (row) {
                     var jsValue = metrics.get(row.jsOwner);
                     var candidate = metrics.get(row.candidateOwner);
@@ -2137,6 +2243,7 @@
                     return {
                         index: row.index,
                         title: examples[row.index].title,
+                        mounted: row.legacy !== null && row.candidate !== null,
                         jsCallback: jsValue ? metricSnapshot(jsValue, now) : null,
                         jsPhases: jsValue
                             ? phaseSnapshot(jsValue, metricSnapshot(jsValue, now).mean, now)
@@ -2172,10 +2279,7 @@
                 virTiming.removeEventListener("change", handleVirTimingChange);
                 runtime.setCallbackTimingObserver(null);
                 disposeFixturePlayers();
-                rows.forEach(function (row) {
-                    row.legacy.dispose();
-                    row.candidate.dispose();
-                });
+                disposeAllAnalysisRows();
                 runtime.dispose();
                 delete window.__illuminateComparisonSnapshot;
                 delete window.__illuminateComparisonResetMetrics;

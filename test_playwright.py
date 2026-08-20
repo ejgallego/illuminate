@@ -962,7 +962,7 @@ def test_animation_comparison_dashboard(page):
     page.wait_for_function("document.body.dataset.ready === 'true'", timeout=60_000)
 
     assert page.locator(".example").count() == 16
-    assert page.locator("#comparison-grid .stage svg").count() == 32
+    assert page.locator("#comparison-grid .stage svg").count() == 0
     assert page.locator("#comparison-view").input_value() == "playback"
     assert page.locator('[data-lab-panel="playback"]').is_visible()
     assert not page.locator('[data-lab-panel="analysis"]').is_visible()
@@ -992,6 +992,13 @@ def test_animation_comparison_dashboard(page):
         "data-state"
     ) == "unavailable"
     assert page.locator("[data-fixture-stage] svg").count() == expected_fixture_players
+    playback_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert playback_snapshot["ownership"] == {
+        "fixturePlayers": expected_fixture_players,
+        "analyzerRows": 0,
+        "analyzerPlayers": 0,
+        "totalPlayers": expected_fixture_players,
+    }
     page.locator("#fixture-select").select_option("7")
     page.wait_for_function(
         "index => document.querySelector('#fixture-select').value === String(index)",
@@ -1008,6 +1015,20 @@ def test_animation_comparison_dashboard(page):
     assert "fixture=7" in page.url
 
     page.locator("#comparison-view").select_option("analysis")
+    page.wait_for_function(
+        """() => window.__illuminateComparisonSnapshot?.().ownership.analyzerPlayers === 2"""
+    )
+    assert page.locator("#comparison-grid .stage svg").count() == 2
+    assert page.locator("[data-fixture-stage] svg").count() == 0
+    selected_ownership = page.evaluate(
+        "window.__illuminateComparisonSnapshot?.().ownership"
+    )
+    assert selected_ownership == {
+        "fixturePlayers": 0,
+        "analyzerRows": 1,
+        "analyzerPlayers": 2,
+        "totalPlayers": 2,
+    }
     page.locator("#comparison-scope").select_option("all")
     page.wait_for_function(
         "document.querySelectorAll('#comparison-grid .example:not([hidden])').length === 16"
@@ -1019,6 +1040,16 @@ def test_animation_comparison_dashboard(page):
     ).inner_text()
     assert "view=analysis" in page.url
     assert "scope=all" in page.url
+    assert page.locator("#comparison-grid .stage svg").count() == 32
+    campaign_ownership = page.evaluate(
+        "window.__illuminateComparisonSnapshot?.().ownership"
+    )
+    assert campaign_ownership == {
+        "fixturePlayers": 0,
+        "analyzerRows": 16,
+        "analyzerPlayers": 32,
+        "totalPlayers": 32,
+    }
 
     page.wait_for_function(
         """() => [...document.querySelectorAll('[data-summary-stat=fps]')]
@@ -1120,20 +1151,22 @@ def test_animation_comparison_dashboard(page):
             '[data-row-phase-group="execute"] [data-row-phase-value]'
           )].every(node => Number.parseFloat(node.textContent || '0') >= 0)"""
     )
-    assert page.evaluate(
+    page.wait_for_function(
         """() => [...document.querySelectorAll(
             '[data-row-phase-group="execute"] [data-row-phase-value="candidate"]'
-          )].every(node => Number.parseFloat(node.textContent || '0') > 0)"""
+          )].every(node => Number.parseFloat(node.textContent || '0') > 0)""",
+        timeout=10_000,
     )
     assert page.evaluate(
         """() => [...document.querySelectorAll(
             '[data-row-phase-group="execute"] [data-row-phase-fill]'
           )].every(node => Number.parseFloat(node.style.height || '0') >= 0)"""
     )
-    assert page.evaluate(
+    page.wait_for_function(
         """() => [...document.querySelectorAll(
             '[data-row-phase-group="execute"] [data-row-phase-fill="candidate"]'
-          )].every(node => Number.parseFloat(node.style.height || '0') > 0)"""
+          )].every(node => Number.parseFloat(node.style.height || '0') > 0)""",
+        timeout=10_000,
     )
     assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
     assert page.evaluate(
@@ -1182,6 +1215,14 @@ def test_animation_comparison_dashboard(page):
         assert page.locator("[data-overhead-ratio]").count() == 16
         assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
 
+    page.wait_for_function(
+        """() => window.__illuminateComparisonSnapshot?.().rows
+            .filter(row => row.mounted)
+            .every(row =>
+              row.jsCallback?.maximum > 0 &&
+              row.callback?.maximum > 0)""",
+        timeout=10_000,
+    )
     page.click("#comparison-pause")
     page.wait_for_timeout(2250)
     persisted_peaks = page.locator("[data-sticky-peak]").all_inner_texts()
@@ -1219,7 +1260,28 @@ def test_animation_comparison_dashboard(page):
     assert selected_snapshot["view"] == "analysis"
     assert selected_snapshot["scope"] == "selected"
     assert selected_snapshot["fixture"] == 7
+    assert selected_snapshot["ownership"] == {
+        "fixturePlayers": 0,
+        "analyzerRows": 1,
+        "analyzerPlayers": 2,
+        "totalPlayers": 2,
+    }
+    assert sum(row["mounted"] for row in selected_snapshot["rows"]) == 1
+    assert page.locator("#comparison-grid .stage svg").count() == 2
     assert "scope=selected" in page.url
+
+    page.locator("#comparison-view").select_option("playback")
+    page.locator("#fixture-pause").click()
+    final_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert final_snapshot["ownership"] == {
+        "fixturePlayers": expected_fixture_players,
+        "analyzerRows": 0,
+        "analyzerPlayers": 0,
+        "totalPlayers": expected_fixture_players,
+    }
+    assert page.locator("#comparison-grid .stage svg").count() == 0
+    assert page.locator("[data-fixture-stage] svg").count() == expected_fixture_players
+    assert int(page.locator("#fixture-frame").inner_text().split()[0]) >= 4
     assert errors == []
 
 
