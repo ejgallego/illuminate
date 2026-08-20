@@ -111,13 +111,18 @@ private def virRevealJs : String :=
 private def firLivePlayerJs : String :=
   include_str "../../../player_js/fir_live_player.js"
 
+/-- Optional loader for a producer-owned LLVM/Emscripten selection-player package. -/
+private def llvmSelectionPlayerJs : String :=
+  include_str "../../../player_js/llvm_selection_player.js"
+
 /-- Browser scheduling host for persistent selection-only VIR players. -/
 private def virSelectionPlayerJs : String :=
   include_str "../../../player_js/vir_selection_player.js"
 
 /-- Browser harness for side-by-side JavaScript and Lean animation comparisons. -/
 private def comparisonJs : String :=
-  animCoreJs ++ "\n" ++ firLivePlayerJs ++ "\n" ++ virSelectionPlayerJs ++ "\n" ++
+  animCoreJs ++ "\n" ++ firLivePlayerJs ++ "\n" ++ llvmSelectionPlayerJs ++ "\n" ++
+    virSelectionPlayerJs ++ "\n" ++
     include_str "../../../player_js/comparison.js"
 
 open Lean in
@@ -246,7 +251,7 @@ try \{
 Renders animations as a side-by-side JavaScript and Lean runtime performance dashboard.
 
 Every example is mounted twice from the same compiled animation data. The page
-uses VIR by default, discovers an independently staged persistent FIR package,
+uses VIR by default, discovers independently staged FIR-native and LLVM/Emscripten packages,
 and reports rolling callback FPS, persistent callback peaks, runtime phases, memory, and host rendering cost.
 -/
 def renderAnimationComparisonHTML
@@ -334,6 +339,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .aggregate-cpu-track .js \{ background: #f4cc55; }
 .aggregate-cpu-track .candidate \{ background: #668fff; }
 .aggregate-cpu-track .candidate.fir \{ background: #5bd6aa; }
+.aggregate-cpu-track .candidate.llvm \{ background: #d7c45c; }
 .aggregate-phases \{ grid-column: 1 / -1; padding-top: 16px; border-top: 1px solid #263453; }
 .aggregate-phases[hidden], .row-phase-comparison[hidden], .phase-metric[hidden] \{ display: none; }
 .row-phase-comparison \{ padding: 16px 20px 18px; background: #10182b; border-top: 1px solid #263453; }
@@ -346,6 +352,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .aggregate-phase-legend .js \{ background: #f4cc55; }
 .aggregate-phase-legend .candidate \{ background: #668fff; }
 .aggregate-phase-legend .candidate.fir \{ background: #5bd6aa; }
+.aggregate-phase-legend .candidate.llvm \{ background: #d7c45c; }
 .aggregate-phase-chart \{ display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .aggregate-phase-group \{ display: grid; grid-template-rows: 128px auto; gap: 7px; min-width: 0; }
 .aggregate-phase-group[data-aggregate-phase-group=\"callback\"], .aggregate-phase-group[data-row-phase-group=\"callback\"] \{ padding: 6px; background: #151f37; border: 1px solid #344362; border-radius: 8px; }
@@ -356,6 +363,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
 .aggregate-phase-column.js i \{ background: #f4cc55; }
 .aggregate-phase-column.candidate i \{ background: #668fff; }
 .aggregate-phase-column.candidate.fir i \{ background: #5bd6aa; }
+.aggregate-phase-column.candidate.llvm i \{ background: #d7c45c; }
 .aggregate-phase-label \{ overflow: hidden; color: #aebbd9; font-size: 9px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
 #comparison-grid \{ display: grid; gap: 20px; width: min(100% - 36px, 1320px); margin: 0 auto 64px; }
 .example \{ overflow: hidden; background: #11192d; border: 1px solid #28375a; border-radius: 16px; box-shadow: 0 16px 52px rgb(0 0 0 / .2); }
@@ -422,7 +430,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
   <button id=\"comparison-pause\" data-analysis-control hidden class=\"quiet\" type=\"button\">Pause scope</button>
   <button id=\"comparison-reset\" data-analysis-control hidden class=\"quiet\" type=\"button\">Reset scope</button>
   <label class=\"auto cycle\"><input id=\"comparison-auto-cycle\" type=\"checkbox\" checked> Auto-cycle pauses and completed animations</label>
-  <label class=\"auto\" data-analysis-control hidden>Candidate backend <select id=\"comparison-backend\"><option value=\"vir-selection\">Lean · VIR selection</option><option value=\"vir-full\">Lean · VIR full</option><option value=\"fir\" disabled>Lean · FIR selection — persistent package required</option></select></label>
+  <label class=\"auto\" data-analysis-control hidden>Candidate backend <select id=\"comparison-backend\"><option value=\"vir-selection\">Lean · VIR selection</option><option value=\"vir-full\">Lean · VIR full</option><option value=\"fir\" disabled>Lean · FIR selection — persistent package required</option><option value=\"llvm\" disabled>Lean · LLVM selection — Emscripten package required</option></select></label>
   <label class=\"auto profiling-toggle\" data-analysis-control hidden><input id=\"comparison-vir-timing\" type=\"checkbox\" aria-controls=\"comparison-grid aggregate-phases\" aria-expanded=\"false\"> Detailed callback phases <span>adds measurement overhead</span></label>
   <span id=\"comparison-status\" data-state=\"loading\">Loading one shared VIR runtime…</span>
 </nav>
@@ -464,7 +472,7 @@ button.quiet \{ border-color: #344362; background: #172039; color: #c6d0e7; }
   </article>
 </section>
 <main id=\"comparison-grid\"></main>
-<p class=\"method\">FPS, CPU, mean, and p95 use a rolling two-second window. Run peaks and slow-callback totals persist until cleared or the candidate backend changes. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Each overhead badge divides candidate mean callback time by the JavaScript player beside it; its gold marker is 1× and its bar is capped at 10×. Selection-only VIR and FIR share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
+<p class=\"method\">FPS, CPU, mean, and p95 use a rolling two-second window. Run peaks and slow-callback totals persist until cleared or the candidate backend changes. “Callback FPS” counts animation callbacks, not distinct source frames. Main-thread CPU is synchronous callback wall time divided by the sampling window, so it includes player decisions, runtime work, and DOM patching but excludes browser paint and compositing. Each overhead badge divides candidate mean callback time by the JavaScript player beside it; its gold marker is 1× and its bar is capped at 10×. Selection-only VIR, FIR-native, and LLVM share the JavaScript renderer and show setup separately from steady-state dispatch; full VIR retains its original Lean-owned patch path. Use the figures comparatively, not as a machine-independent benchmark.</p>
 </div>
 <script type=\"module\">
 {js}

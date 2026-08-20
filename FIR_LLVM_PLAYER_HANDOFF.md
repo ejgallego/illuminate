@@ -69,11 +69,36 @@ disposePlayer(player)
 replayTrace(animation, events)
 ```
 
-An LLVM-specific module and capability version is expected. Include
-explicit phase timings for projection, encoding/marshal, execution,
-decoding, and total call time so the dashboard can make an
+Keep the semantic and ownership constants equal to the accepted
+FIR-native v4 adapter, and declare the Emscripten transport
+separately:
+
+```text
+ILLUMINATE_SELECTION_PLAYER_ADAPTER_API_VERSION =
+  fir.illuminate-player.browser/v4
+ILLUMINATE_SELECTION_PLAYER_INPUT_LAYOUT_VERSION =
+  lean-4.32-Illuminate.Animation.SelectionAnimation/v4
+ILLUMINATE_SELECTION_PLAYER_OWNERSHIP_VERSION =
+  fir.illuminate-player.persistent-checkpoint/v2
+ILLUMINATE_SELECTION_PLAYER_HOT_EVENT_VERSION =
+  fir.illuminate-player.hot-event/v1
+ILLUMINATE_SELECTION_PLAYER_EMSCRIPTEN_WIRE_VERSION =
+  fir.illuminate-player.emscripten-wire/v1
+```
+
+Export
+`loadEmscriptenIlluminateSelectionPlayerAdapter(manifestSource, options?)`
+from the browser adapter. It returns the five-operation adapter above.
+The separate wire constant identifies LLVM-specific encoding without
+making the semantic player API compiler-specific.
+
+Include explicit phase timings for projection, encoding/marshal,
+execution, decoding, and total call time so the dashboard can make an
 apples-to-apples comparison. State which work is excluded from each
-interval.
+interval. Each successful operation must expose nonnegative
+`encodeMs`, `executeMs`, `decodeMs`, and `totalMs`; creation
+additionally exposes `projectMs`. Its memory record must expose
+`currentBytes` and the instance-lifetime high-water mark `peakBytes`.
 
 Prefer an unthreaded package that runs on Illuminate's ordinary static
 server. If the generated Lean runtime requires threads, record the
@@ -88,11 +113,27 @@ producer adapter:  fir-llvm
 runtime boundary:  browser-benchmarks/bounded-runtime/v1
 ```
 
-The package must include its Emscripten module, Wasm, loader, browser
-adapter, self-describing manifest, checksums, and package-local smoke
-test. Follow the existing `prettyM` FIR-LLVM package as the structural
-precedent, but retain the Illuminate v4 selection projection and
-lifecycle contract.
+The immutable package must use these names so Illuminate can stage
+producer bytes without rewriting them:
+
+```text
+README.md
+SHA256SUMS
+emscripten-loader.mjs
+illuminate-selection-player-emscripten-adapter.mjs
+illuminate-selection-player.manifest.json
+illuminate-selection-player.mjs
+illuminate-selection-player.wasm
+smoke.mjs
+```
+
+The self-describing manifest must use `profile: "emscripten"`,
+inventory the module and Wasm under `artifacts` with byte lengths and
+SHA-256 values, record the exact Illuminate source commit and
+relevant-file hashes, and declare the five browser methods plus all
+capability versions above. Follow the existing `prettyM` FIR-LLVM
+package as the structural precedent, but retain the Illuminate v4
+selection projection and lifecycle contract.
 
 ## Ownership and performance constraints
 

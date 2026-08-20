@@ -30,6 +30,7 @@ interface FirComparisonAdapter {
     dispatch(player: unknown, event: unknown): unknown;
     dispatchTick(player: unknown, timestamp: number): unknown;
     disposePlayer(player: unknown): void;
+    replayTrace(animation: AnimData, events: unknown[]): unknown;
 }
 
 interface FirComparisonRenderer {
@@ -57,6 +58,26 @@ declare function createFirLivePlayerHost(
     seek(frame: number): void;
     dispose(): void;
 };
+declare function createSelectionPlayerHost(
+    adapter: FirComparisonAdapter,
+    animation: AnimData,
+    renderer: FirComparisonRenderer,
+    scheduler?: {
+        request(callback: FrameRequestCallback): number;
+        cancel(handle: number): void;
+    },
+    observer?: ((observation: any) => void) | null,
+    observeDispatch?: (() => boolean) | null,
+): {
+    advance(): void;
+    pause(): void;
+    seek(frame: number): void;
+    dispose(): void;
+};
+declare function loadLlvmSelectionPlayerAdapter(assets: {
+    adapterUrl: URL;
+    manifestUrl: URL;
+}): Promise<FirComparisonAdapter>;
 declare function createVirSelectionPlayerHost(
     runtime: {
         call(name: string, ...args: unknown[]): unknown;

@@ -199,7 +199,7 @@ export function createSelectionDomRenderer(animation, container) {
 export const createFirSelectionDomRenderer = createSelectionDomRenderer;
 
 /**
- * Owns browser callback scheduling around a persistent FIR player handle.
+ * Owns browser callback scheduling around a persistent compiled player handle.
  * The adapter supplies `scheduleNextFrame`; the host does not reconstruct Lean playback semantics.
  *
  * @param {FirLivePlayerAdapter} adapter
@@ -210,7 +210,7 @@ export const createFirSelectionDomRenderer = createSelectionDomRenderer;
  * @param {(() => boolean) | null} [observeDispatch]
  * @returns {FirLivePlayerHost}
  */
-export function createFirLivePlayerHost(
+export function createSelectionPlayerHost(
     adapter,
     animation,
     renderer,
@@ -333,3 +333,6 @@ export function createFirLivePlayerHost(
         },
     };
 }
+
+/** Backwards-compatible name for FIR-native consumers of the shared selection-player host. */
+export const createFirLivePlayerHost = createSelectionPlayerHost;

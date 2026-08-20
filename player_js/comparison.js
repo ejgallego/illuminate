@@ -51,7 +51,7 @@
  * @typedef {(timings: RuntimeCallTimings) => void} JsSelectionObserver
  * @typedef {{
  *   owner: string,
- *   engine: "js" | "vir" | "fir",
+ *   engine: "js" | "vir" | "fir" | "llvm",
  *   samples: CallbackSample[],
  *   phaseSamples: RuntimePhaseSample[],
  *   creation: CreationSample | null,
@@ -66,8 +66,9 @@
  *   createPlayer(animation: AnimData): unknown,
  *   dispatch(player: unknown, event: unknown): unknown,
  *   dispatchTick(player: unknown, timestamp: number): unknown,
- *   disposePlayer(player: unknown): void
- * }} ComparisonFirAdapter
+ *   disposePlayer(player: unknown): void,
+ *   replayTrace(animation: AnimData, events: unknown[]): unknown
+ * }} ComparisonSelectionAdapter
  * @typedef {{
  *   kind: "create" | "dispatch",
  *   operation: string,
@@ -76,7 +77,7 @@
  *   adapterWallMs: number,
  *   renderMs: number,
  *   totalMs: number
- * }} ComparisonFirObservation
+ * }} ComparisonCompiledObservation
  * @typedef {{
  *   kind: "create" | "dispatch",
  *   operation: string,
@@ -129,6 +130,8 @@
     var firWasmUrl = "./fir-live/illuminate-selection-player.wasm";
     var firManifestUrl = "./fir-live/illuminate-selection-player.wasm.json";
     var firBuildUrl = "./fir-live/BUILD.json";
+    var llvmAdapterUrl = "./llvm-live/illuminate-selection-player-emscripten-adapter.mjs";
+    var llvmManifestUrl = "./llvm-live/illuminate-selection-player.manifest.json";
     var sampleWindowMs = 2000;
     var metrics = new Map();
     var labParams = new URLSearchParams(window.location.search);
@@ -149,7 +152,7 @@
         );
     }
 
-    /** @param {string} owner @param {"js" | "vir" | "fir"} engine */
+    /** @param {string} owner @param {"js" | "vir" | "fir" | "llvm"} engine */
     function registerMetrics(owner, engine) {
         /** @type {PlayerMetrics} */
         var value = {
@@ -245,21 +248,36 @@
         pruneSamples(value, now);
     }
 
-    /** @param {ComparisonFirObservation} observation */
-    function recordFirObservation(observation) {
+    /** @param {ComparisonCompiledObservation} observation */
+    function recordCompiledObservation(observation) {
         if (currentOwner === null) return;
         var value = metrics.get(currentOwner);
-        if (!value || value.engine !== "fir") return;
+        if (!value || (value.engine !== "fir" && value.engine !== "llvm")) return;
         var timings = observation.adapterTimings;
         var memory = observation.memory;
         if (observation.kind === "create") {
             value.creation = {
                 totalMs: timings?.totalMs ?? observation.adapterWallMs,
                 projectMs: timings?.projectMs ?? 0,
-                encodeMs: timings?.selectionEncodeMs ?? timings?.animationEncodeMs ?? 0,
+                encodeMs:
+                    timings?.selectionEncodeMs ??
+                    timings?.animationEncodeMs ??
+                    timings?.encodeMs ??
+                    0,
                 persistentBytes: Math.max(
                     0,
-                    Number(memory?.persistentCheckpoint ?? 0) - Number(memory?.frontierBefore ?? 0),
+                    Number(
+                        memory?.persistentBytes ??
+                            memory?.currentBytes ??
+                            memory?.persistentCheckpoint ??
+                            0,
+                    ) -
+                        Number(
+                            memory?.persistentBytes !== undefined ||
+                                memory?.currentBytes !== undefined
+                                ? 0
+                                : (memory?.frontierBefore ?? 0),
+                        ),
                 ),
             };
             return;
@@ -787,7 +805,7 @@
      * @param {PhaseAggregate} candidatePhases
      * @param {number} jsCallbackMs
      * @param {number} candidateCallbackMs
-     * @param {"vir-selection" | "vir-full" | "fir"} engine
+     * @param {"vir-selection" | "vir-full" | "fir" | "llvm"} engine
      */
     function pairedPhaseDefinitions(
         jsPhases,
@@ -887,7 +905,7 @@
      * @param {number} jsCallbackMs
      * @param {number} candidateCallbackMs
      * @param {boolean} enabled
-     * @param {"vir-selection" | "vir-full" | "fir"} engine
+     * @param {"vir-selection" | "vir-full" | "fir" | "llvm"} engine
      */
     function renderAggregatePhases(
         jsPhases,
@@ -930,7 +948,7 @@
      * @param {number} jsCallbackMs
      * @param {number} candidateCallbackMs
      * @param {boolean} enabled
-     * @param {"vir-selection" | "vir-full" | "fir"} engine
+     * @param {"vir-selection" | "vir-full" | "fir" | "llvm"} engine
      */
     function renderRowPhaseComparison(
         target,
@@ -967,7 +985,7 @@
      * @param {HTMLElement} target
      * @param {ReturnType<typeof phaseSnapshot>} snapshot
      * @param {boolean} enabled
-     * @param {"js" | "vir-selection" | "vir-full" | "fir"} engine
+     * @param {"js" | "vir-selection" | "vir-full" | "fir" | "llvm"} engine
      */
     function renderPhaseMetric(target, snapshot, enabled, engine) {
         /** @param {string} name @param {number} value */
@@ -991,9 +1009,11 @@
                     ? "JavaScript selection callback"
                     : engine === "fir"
                       ? "FIR selection callback"
-                      : engine === "vir-selection"
-                        ? "VIR selection callback"
-                        : "VIR full callback";
+                      : engine === "llvm"
+                        ? "LLVM selection callback"
+                        : engine === "vir-selection"
+                          ? "VIR selection callback"
+                          : "VIR full callback";
         }
         var inputLabel = target.querySelector("[data-phase-label=input]");
         if (inputLabel) {
@@ -1002,9 +1022,11 @@
                     ? "direct JS object"
                     : engine === "fir"
                       ? "event encode"
-                      : engine === "vir-selection"
-                        ? "event normalize"
-                        : "marshal";
+                      : engine === "llvm"
+                        ? "wire encode"
+                        : engine === "vir-selection"
+                          ? "event normalize"
+                          : "marshal";
         }
         var executeLabel = target.querySelector("[data-phase-label=execute]");
         if (executeLabel) {
@@ -1015,7 +1037,10 @@
         var hostLabel = target.querySelector("[data-phase-label=host]");
         if (hostLabel) {
             hostLabel.textContent =
-                engine === "js" || engine === "fir" || engine === "vir-selection"
+                engine === "js" ||
+                engine === "fir" ||
+                engine === "llvm" ||
+                engine === "vir-selection"
                     ? "shared DOM apply"
                     : "host ⊂ execute";
         }
@@ -1048,7 +1073,16 @@
                           formatNumber(creation.encodeMs, 2) +
                           " ms · resident " +
                           formatBytes(creation.persistentBytes)
-                        : "shared runtime";
+                        : engine === "llvm" && creation
+                          ? "create " +
+                            formatNumber(creation.totalMs, 2) +
+                            " ms · project " +
+                            formatNumber(creation.projectMs, 2) +
+                            " ms · wire encode " +
+                            formatNumber(creation.encodeMs, 2) +
+                            " ms · resident " +
+                            formatBytes(creation.persistentBytes)
+                          : "shared runtime";
         }
     }
 
@@ -1169,7 +1203,7 @@
             })
         );
 
-        /** @returns {Promise<ComparisonFirAdapter | null>} */
+        /** @returns {Promise<ComparisonSelectionAdapter | null>} */
         async function loadFirAdapter() {
             try {
                 var module = await import(new URL(firAdapterUrl, window.location.href).href);
@@ -1186,7 +1220,7 @@
                 ) {
                     throw new Error("staged FIR live package has an unsupported contract");
                 }
-                var loaded = /** @type {ComparisonFirAdapter} */ (
+                var loaded = /** @type {ComparisonSelectionAdapter} */ (
                     await module.fetchIlluminateSelectionPlayerAdapter(
                         new URL(firWasmUrl, window.location.href),
                         {
@@ -1206,6 +1240,22 @@
         }
 
         var firAdapter = await loadFirAdapter();
+        /** @returns {Promise<ComparisonSelectionAdapter | null>} */
+        async function loadLlvmAdapter() {
+            try {
+                return /** @type {ComparisonSelectionAdapter} */ (
+                    await loadLlvmSelectionPlayerAdapter({
+                        adapterUrl: new URL(llvmAdapterUrl, window.location.href),
+                        manifestUrl: new URL(llvmManifestUrl, window.location.href),
+                    })
+                );
+            } catch (error) {
+                console.info("LLVM selection comparison backend is unavailable", error);
+                return null;
+            }
+        }
+
+        var llvmAdapter = await loadLlvmAdapter();
         var backendSelect = /** @type {HTMLSelectElement} */ (
             document.getElementById("comparison-backend")
         );
@@ -1218,6 +1268,15 @@
         } else {
             firOption.title = "Stage an accepted persistent package under test_output/fir-live";
         }
+        var llvmOption = /** @type {HTMLOptionElement} */ (
+            backendSelect.querySelector('option[value="llvm"]')
+        );
+        if (llvmAdapter !== null) {
+            llvmOption.disabled = false;
+            llvmOption.textContent = "Lean · LLVM";
+        } else {
+            llvmOption.title = "Stage an accepted Emscripten package under test_output/llvm-live";
+        }
         var virTiming = /** @type {HTMLInputElement} */ (
             document.getElementById("comparison-vir-timing")
         );
@@ -1227,13 +1286,15 @@
         var scopeSelect = /** @type {HTMLSelectElement} */ (
             document.getElementById("comparison-scope")
         );
-        /** @type {"vir-selection" | "vir-full" | "fir"} */
+        /** @type {"vir-selection" | "vir-full" | "fir" | "llvm"} */
         var currentBackend =
             labParams.get("backend") === "fir" && firAdapter !== null
                 ? "fir"
-                : labParams.get("backend") === "vir-full"
-                  ? "vir-full"
-                  : "vir-selection";
+                : labParams.get("backend") === "llvm" && llvmAdapter !== null
+                  ? "llvm"
+                  : labParams.get("backend") === "vir-full"
+                    ? "vir-full"
+                    : "vir-selection";
         backendSelect.value = currentBackend;
         viewSelect.value = currentView;
         scopeSelect.value = currentScope;
@@ -1308,12 +1369,28 @@
         function mountFirIn(data, container) {
             if (firAdapter === null) throw new Error("FIR live backend is unavailable");
             var renderer = createSelectionDomRenderer(data, container);
-            return createFirLivePlayerHost(
+            return createSelectionPlayerHost(
                 firAdapter,
                 data,
                 renderer,
                 undefined,
-                recordFirObservation,
+                recordCompiledObservation,
+                function () {
+                    return Boolean(phaseTiming?.checked);
+                },
+            );
+        }
+
+        /** @param {AnimData} data @param {HTMLElement} container @returns {ComparisonCandidate} */
+        function mountLlvmIn(data, container) {
+            if (llvmAdapter === null) throw new Error("LLVM selection backend is unavailable");
+            var renderer = createSelectionDomRenderer(data, container);
+            return createSelectionPlayerHost(
+                llvmAdapter,
+                data,
+                renderer,
+                undefined,
+                recordCompiledObservation,
                 function () {
                     return Boolean(phaseTiming?.checked);
                 },
@@ -1342,11 +1419,23 @@
             return mountFirIn(data, container);
         }
 
+        /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
+        function mountLlvmCandidate(data, index) {
+            var container = document.querySelector(
+                '[data-example="' + String(index) + '"] [data-stage="candidate"]',
+            );
+            if (!(container instanceof HTMLElement)) {
+                throw new Error("LLVM candidate container is missing");
+            }
+            return mountLlvmIn(data, container);
+        }
+
         updateVirTiming();
 
         /** @param {AnimData} data @param {number} index @returns {ComparisonCandidate} */
         function mountCandidate(data, index) {
             if (currentBackend === "fir") return mountFirCandidate(data, index);
+            if (currentBackend === "llvm") return mountLlvmCandidate(data, index);
             if (currentBackend === "vir-full") return mountVirFullCandidate(data, index);
             return mountVirSelectionCandidate(data, index);
         }
@@ -1372,9 +1461,11 @@
             var name =
                 currentBackend === "fir"
                     ? "Lean · FIR selection"
-                    : currentBackend === "vir-full"
-                      ? "Lean · VIR full"
-                      : "Lean · VIR selection";
+                    : currentBackend === "llvm"
+                      ? "Lean · LLVM selection"
+                      : currentBackend === "vir-full"
+                        ? "Lean · VIR full"
+                        : "Lean · VIR selection";
             for (var label of document.querySelectorAll("[data-candidate-name]")) {
                 label.textContent = name;
             }
@@ -1383,31 +1474,43 @@
                 stickyName.textContent =
                     currentBackend === "fir"
                         ? "FIR"
-                        : currentBackend === "vir-full"
-                          ? "VIR full"
-                          : "VIR selection";
+                        : currentBackend === "llvm"
+                          ? "LLVM"
+                          : currentBackend === "vir-full"
+                            ? "VIR full"
+                            : "VIR selection";
             }
             for (var dot of document.querySelectorAll("[data-candidate-dot]")) {
-                dot.classList.toggle("vir", currentBackend !== "fir");
+                dot.classList.toggle("vir", currentBackend !== "fir" && currentBackend !== "llvm");
                 dot.classList.toggle("fir", currentBackend === "fir");
+                dot.classList.toggle("llvm", currentBackend === "llvm");
             }
             var summary = document.querySelector('[data-summary="candidate"]');
             var summaryName = summary?.querySelector("h2");
             if (summaryName) summaryName.textContent = name + " aggregate";
             var summaryDot = summary?.querySelector(".engine-dot");
-            summaryDot?.classList.toggle("vir", currentBackend !== "fir");
+            summaryDot?.classList.toggle(
+                "vir",
+                currentBackend !== "fir" && currentBackend !== "llvm",
+            );
             summaryDot?.classList.toggle("fir", currentBackend === "fir");
+            summaryDot?.classList.toggle("llvm", currentBackend === "llvm");
             for (var candidateVisual of document.querySelectorAll(
                 '[data-aggregate-cpu-fill="candidate"], [data-aggregate-candidate-legend], [data-aggregate-phase-candidate-column], [data-row-candidate-legend], [data-row-phase-candidate-column]',
             )) {
                 candidateVisual.classList.toggle("fir", currentBackend === "fir");
+                candidateVisual.classList.toggle("llvm", currentBackend === "llvm");
             }
         }
 
-        /** @param {"vir-selection" | "vir-full" | "fir"} backend */
+        /** @param {"vir-selection" | "vir-full" | "fir" | "llvm"} backend */
         function switchBackend(backend) {
             if (backend === currentBackend) return;
             if (backend === "fir" && firAdapter === null) {
+                backendSelect.value = currentBackend;
+                return;
+            }
+            if (backend === "llvm" && llvmAdapter === null) {
                 backendSelect.value = currentBackend;
                 return;
             }
@@ -1427,7 +1530,13 @@
         backendSelect.addEventListener("change", function () {
             var backend = backendSelect.value;
             switchBackend(
-                backend === "fir" ? "fir" : backend === "vir-full" ? "vir-full" : "vir-selection",
+                backend === "fir"
+                    ? "fir"
+                    : backend === "llvm"
+                      ? "llvm"
+                      : backend === "vir-full"
+                        ? "vir-full"
+                        : "vir-selection",
             );
             updateLabStatus();
             syncLabUrl();
@@ -1526,7 +1635,7 @@
                 });
             fixturePlayers = [];
             fixtureMountedIndex = null;
-            for (var id of ["js", "vir", "fir"]) {
+            for (var id of ["js", "vir", "fir", "llvm"]) {
                 fixtureStage(id).replaceChildren();
                 setFixtureState(id, "inactive", "inactive");
             }
@@ -1571,6 +1680,15 @@
             } else {
                 mountFixturePlayer("fir", function () {
                     return mountFirIn(example.data, fixtureStage("fir"));
+                });
+            }
+            if (llvmAdapter === null) {
+                fixtureStage("llvm").textContent =
+                    "Stage the accepted LLVM/Emscripten selection package.";
+                setFixtureState("llvm", "unavailable", "package not staged");
+            } else {
+                mountFixturePlayer("llvm", function () {
+                    return mountLlvmIn(example.data, fixtureStage("llvm"));
                 });
             }
             fixtureMountedIndex = index;
@@ -1740,7 +1858,10 @@
             if (row.candidate !== null) return;
             analysisArticle(row).querySelector('[data-stage="candidate"]')?.replaceChildren();
             row.candidateOwner = currentBackend + "-" + String(row.index);
-            registerMetrics(row.candidateOwner, currentBackend === "fir" ? "fir" : "vir");
+            registerMetrics(
+                row.candidateOwner,
+                currentBackend === "fir" ? "fir" : currentBackend === "llvm" ? "llvm" : "vir",
+            );
             row.candidate = withOwner(row.candidateOwner, function () {
                 return mountCandidate(row.data, row.index);
             });
@@ -1881,11 +2002,13 @@
 
         function updateLabStatus() {
             if (currentView === "playback") {
+                var packageStatus = llvmAdapter === null ? " · LLVM package pending" : "";
                 dashboardStatus.textContent =
                     String(examples.length) +
                     " fixtures · " +
                     String(fixturePlayers.length) +
-                    "/4 playback backends · LLVM package pending";
+                    "/4 playback backends" +
+                    packageStatus;
             } else if (currentScope === "all") {
                 dashboardStatus.textContent =
                     String(rows.length) +
@@ -2229,6 +2352,7 @@
                 fixture: selectedFixtureIndex(),
                 backend: currentBackend,
                 firAvailable: firAdapter !== null,
+                llvmAvailable: llvmAdapter !== null,
                 timingEnabled: virTiming.checked,
                 ownership: {
                     fixturePlayers: fixturePlayers.length,

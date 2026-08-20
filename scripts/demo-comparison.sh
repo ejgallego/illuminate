@@ -12,6 +12,9 @@ npm run test:player-traces
 if [ -n "${ILLUMINATE_FIR_LIVE_PLAYER_DIR:-}" ]; then
   npm run stage:fir-live
 fi
+if [ -n "${ILLUMINATE_LLVM_PLAYER_DIR:-}" ]; then
+  npm run stage:llvm-live
+fi
 
 echo "Illuminate JavaScript / VIR / FIR runtime comparison:"
 echo "http://127.0.0.1:$demo_port/anim-comparison.html"

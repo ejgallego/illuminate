@@ -4,7 +4,10 @@ import {
     createFirDomRenderer,
     createFirLivePlayerHost,
     createFirSelectionDomRenderer,
+    createSelectionPlayerHost,
 } from "../player_js/fir_live_player.js";
+
+assert.equal(createFirLivePlayerHost, createSelectionPlayerHost);
 
 function action({
     frame = 0,

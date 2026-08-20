@@ -141,6 +141,18 @@ def stage_player_assets():
             print("FIR live staging stderr:", live_result.stderr, file=sys.stderr)
             raise RuntimeError(f"FIR live staging failed:\n{live_result.stdout}")
         output += live_result.stdout
+    if os.environ.get("ILLUMINATE_LLVM_PLAYER_DIR"):
+        llvm_result = subprocess.run(
+            ["npm", "run", "stage:llvm-live"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=900,
+        )
+        if llvm_result.returncode != 0:
+            print("FIR-LLVM live staging stderr:", llvm_result.stderr, file=sys.stderr)
+            raise RuntimeError(f"FIR-LLVM live staging failed:\n{llvm_result.stdout}")
+        output += llvm_result.stdout
     if os.environ.get("ILLUMINATE_FIR_SPATIAL_HIT_SCENE_DIR"):
         spatial_result = subprocess.run(
             ["npm", "run", "stage:fir-spatial-hit-scene"],
@@ -979,20 +991,31 @@ def test_animation_comparison_dashboard(page):
     assert page.locator("[data-row-phase-comparison]:visible").count() == 0
     assert page.locator("[data-aggregate-phases]:visible").count() == 0
     fir_live_staged = (ROOT / "test_output" / "fir-live" / "BUILD.json").exists()
+    llvm_live_staged = (
+        ROOT
+        / "test_output"
+        / "llvm-live"
+        / "illuminate-selection-player.manifest.json"
+    ).exists()
     assert page.locator('#comparison-backend option[value="fir"]').evaluate(
         "option => option.disabled"
     ) is (not fir_live_staged)
+    assert page.locator('#comparison-backend option[value="llvm"]').evaluate(
+        "option => option.disabled"
+    ) is (not llvm_live_staged)
     assert page.locator("#fixture-select option").count() == 16
     assert page.locator("[data-fixture-backend]").count() == 4
-    expected_fixture_players = 3 if fir_live_staged else 2
+    expected_fixture_players = 2 + int(fir_live_staged) + int(llvm_live_staged)
     assert page.locator('[data-fixture-backend][data-state="ready"]').count() == (
         expected_fixture_players
     )
-    assert page.locator('[data-fixture-backend="llvm"]').get_attribute(
-        "data-state"
-    ) == "unavailable"
+    assert page.locator('[data-fixture-backend="llvm"]').get_attribute("data-state") == (
+        "ready" if llvm_live_staged else "unavailable"
+    )
     assert page.locator("[data-fixture-stage] svg").count() == expected_fixture_players
     playback_snapshot = page.evaluate("window.__illuminateComparisonSnapshot?.()")
+    assert playback_snapshot["firAvailable"] is fir_live_staged
+    assert playback_snapshot["llvmAvailable"] is llvm_live_staged
     assert playback_snapshot["ownership"] == {
         "fixturePlayers": expected_fixture_players,
         "analyzerRows": 0,
@@ -1210,6 +1233,21 @@ def test_animation_comparison_dashboard(page):
             """() => [...document.querySelectorAll(
                 '[data-candidate-phases] [data-phase-setup]'
               )].every(node => node.textContent?.startsWith('create '))""",
+            timeout=10_000,
+        )
+        assert page.locator("[data-overhead-ratio]").count() == 16
+        assert page.locator("[data-dom-match]:not(.mismatch)").count() > 0
+
+    if llvm_live_staged:
+        page.locator("#comparison-backend").select_option("llvm")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('[data-candidate-name]')]
+                .every(node => node.textContent === 'Lean · LLVM selection')"""
+        )
+        page.click("#comparison-start")
+        page.wait_for_function(
+            """() => [...document.querySelectorAll('[data-phase-count]')]
+                .every(node => Number.parseInt(node.textContent || '0', 10) > 0)""",
             timeout=10_000,
         )
         assert page.locator("[data-overhead-ratio]").count() == 16

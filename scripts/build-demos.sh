@@ -25,6 +25,14 @@ else
   echo "FIR selection player not staged; set ILLUMINATE_FIR_LIVE_PLAYER_DIR to include it"
 fi
 
+if [ -n "${ILLUMINATE_LLVM_PLAYER_DIR:-}" ]; then
+  npm run stage:llvm-live
+elif [ -f "$repo_root/test_output/llvm-live/illuminate-selection-player.manifest.json" ]; then
+  echo "reusing staged FIR-LLVM selection player under test_output/llvm-live"
+else
+  echo "FIR-LLVM selection player not staged; set ILLUMINATE_LLVM_PLAYER_DIR to include it"
+fi
+
 if [ -n "${ILLUMINATE_FIR_HIT_SCENE_DIR:-}" ]; then
   npm run stage:fir-hit-scene
 fi

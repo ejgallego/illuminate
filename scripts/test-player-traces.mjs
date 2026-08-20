@@ -14,6 +14,7 @@ import {
     projectVirSelectionAnimation,
     projectVirSelectionEvent,
 } from "../player_js/vir_selection_player.js";
+import { loadLlvmSelectionPlayerAdapter } from "../player_js/llvm_selection_player.js";
 
 import { createIlluminatePlayerAdapter } from "../test_output/native/illuminate-player-browser-adapter.mjs";
 import {
@@ -244,6 +245,17 @@ try {
 } catch (error) {
     if (error?.code !== "ENOENT") throw error;
 }
+const llvmRoot = new URL("../test_output/llvm-live/", import.meta.url);
+let llvm = null;
+try {
+    await access(new URL("illuminate-selection-player.manifest.json", llvmRoot));
+    llvm = await loadLlvmSelectionPlayerAdapter({
+        adapterUrl: new URL("illuminate-selection-player-emscripten-adapter.mjs", llvmRoot),
+        manifestUrl: new URL("illuminate-selection-player.manifest.json", llvmRoot),
+    });
+} catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+}
 
 function materializeSelections(data, actions) {
     return actions.map((action) => {
@@ -372,6 +384,15 @@ try {
                 `${testCase.name} (FIR selection)`,
             );
         }
+        if (llvm !== null) {
+            const llvmResult = llvm.replayTrace(testCase.data, testCase.events);
+            assert.equal(llvmResult.ok, true, llvmResult.error);
+            assert.deepEqual(
+                materializeSelections(testCase.data, llvmResult.actions),
+                expected,
+                `${testCase.name} (LLVM selection)`,
+            );
+        }
     }
 
     const invalidTypedResult = normalizeVirTraceResult(
@@ -429,5 +450,5 @@ try {
     runtime.dispose();
 }
 
-const backends = `legacy/VIR-JSON/VIR-typed/VIR-selection/VIR-scalar-tick/FIR-native${selection === null ? "" : "/FIR-selection"}`;
+const backends = `legacy/VIR-JSON/VIR-typed/VIR-selection/VIR-scalar-tick/FIR-native${selection === null ? "" : "/FIR-selection"}${llvm === null ? "" : "/LLVM-selection"}`;
 console.log(`${cases.length} ${backends} player traces matched`);

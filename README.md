@@ -562,9 +562,10 @@ For a more visual comparison, the test suite generates a dashboard
 containing all of the `#animate` examples twice: once with the legacy
 JavaScript player and once with a selectable Lean runtime.
 Selection-only VIR is the default and shares the browser-owned patch
-renderer with FIR; the original full VIR renderer remains available as
-a control. An accepted persistent FIR package is discovered under
-`test_output/fir-live`. Both columns receive the same controls and
+renderer with FIR-native and LLVM/Emscripten; the original full VIR
+renderer remains available as a control. Accepted persistent packages
+are discovered under `test_output/fir-live` and
+`test_output/llvm-live`. Both columns receive the same controls and
 report rolling callback FPS, main-thread time, callback percentiles,
 long frames, and aggregate CPU estimates. Enable **Detailed callback
 phases** to compare JavaScript and Lean input, execution, decoding,
@@ -594,7 +595,18 @@ ILLUMINATE_FIR_LIVE_PLAYER_DIR=/absolute/immutable/package \
 ```
 
 When a live package is available, passing the same environment
-variable to `npm run demo:comparison` stages it automatically.
+variable to `npm run demo:comparison` stages it automatically. The
+optional LLVM selector and fourth playback slot follow the same rule:
+
+```sh
+ILLUMINATE_LLVM_PLAYER_DIR=/absolute/immutable/package \
+  npm run stage:llvm-live
+```
+
+Its Emscripten package keeps the same v4 selection semantics and adds
+a separately versioned wire boundary; Illuminate stages the producer
+bytes without rewriting them.
+
 Core-only and DOM-inclusive measurements are written as structured
 JSON by:
 
