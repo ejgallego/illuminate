@@ -2,13 +2,15 @@
 # requires-python = ">=3.11"
 # dependencies = ["playwright"]
 # ///
-"""Measures the DOM-inclusive Illuminate JavaScript/VIR/FIR comparison dashboard."""
+"""Measures the DOM-inclusive Illuminate JavaScript/VIR/FIR/LLVM dashboard."""
 
 import argparse
+import hashlib
 import json
 import platform
 import shutil
 import statistics
+import subprocess
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -30,6 +32,24 @@ class QuietHandler(SimpleHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass
+
+
+def sha256(path: Path):
+    """Computes one artifact SHA-256."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def git_identity(path: Path):
+    """Records one checkout revision and dirty state."""
+    revision = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=path, text=True
+    ).strip()
+    dirty = bool(
+        subprocess.check_output(
+            ["git", "status", "--porcelain"], cwd=path, text=True
+        ).strip()
+    )
+    return {"revision": revision, "dirty": dirty}
 
 
 def chromium_options():
@@ -305,8 +325,14 @@ def main():
     html = OUTPUT / "anim-comparison.html"
     assert html.exists(), "run lake test --wfail to generate anim-comparison.html"
     fir_build = OUTPUT / "fir-live" / "BUILD.json"
+    llvm_manifest = (
+        OUTPUT / "llvm-live" / "illuminate-selection-player.manifest.json"
+    )
     if not args.allow_vir_only:
         assert fir_build.exists(), "run npm run stage:fir-live before the dashboard benchmark"
+        assert llvm_manifest.exists(), (
+            "run npm run stage:llvm-live before the dashboard benchmark"
+        )
 
     handler = partial(QuietHandler, directory=str(OUTPUT))
     server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
@@ -316,23 +342,23 @@ def main():
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True, **chromium_options())
+            browser_version = browser.version
             observations = []
             url = (
                 f"http://127.0.0.1:{server.server_address[1]}/{html.name}"
                 "?view=analysis&scope=all"
             )
             for round_index in range(args.runs):
+                available_backends = ["vir-selection", "vir-full"]
+                if fir_build.exists():
+                    available_backends.append("fir")
+                if llvm_manifest.exists():
+                    available_backends.append("llvm")
                 order = (
-                    ["vir-selection", "vir-full", "fir"]
+                    available_backends
                     if round_index % 2 == 0
-                    else ["fir", "vir-full", "vir-selection"]
+                    else list(reversed(available_backends))
                 )
-                if args.allow_vir_only and not fir_build.exists():
-                    order = (
-                        ["vir-selection", "vir-full"]
-                        if round_index % 2 == 0
-                        else ["vir-full", "vir-selection"]
-                    )
                 for backend_index, backend in enumerate(order):
                     timing_order = list(HOST_PROFILER_MODES)
                     if (round_index + backend_index) % 2 == 1:
@@ -356,11 +382,19 @@ def main():
                         fir_available = not page.locator(
                             '#comparison-backend option[value="fir"]'
                         ).is_disabled()
+                        llvm_available = not page.locator(
+                            '#comparison-backend option[value="llvm"]'
+                        ).is_disabled()
                         if not args.allow_vir_only:
                             assert fir_available, (
                                 "staged FIR package was rejected by the dashboard loader"
                             )
+                            assert llvm_available, (
+                                "staged LLVM package was rejected by the dashboard loader"
+                            )
                         if backend == "fir" and not fir_available:
+                            continue
+                        if backend == "llvm" and not llvm_available:
                             continue
                         for timing_mode in timing_order:
                             observation = measure_backend(
@@ -380,8 +414,11 @@ def main():
 
     assert errors == [], f"dashboard page errors: {errors}"
     build = json.loads(fir_build.read_text()) if fir_build.exists() else None
+    llvm_build = (
+        json.loads(llvm_manifest.read_text()) if llvm_manifest.exists() else None
+    )
     summaries = {}
-    for backend in ("vir-selection", "vir-full", "fir"):
+    for backend in ("vir-selection", "vir-full", "fir", "llvm"):
         mode_summaries = {
             timing_mode: summary
             for timing_mode in HOST_PROFILER_MODES
@@ -399,7 +436,7 @@ def main():
                 "hostProfilerEffect": profiler_effect,
             }
     report = {
-        "schema": "illuminate.live-dashboard-phases/v5",
+        "schema": "illuminate.live-dashboard-phases/v6",
         "generatedAtUnix": time(),
         "scope": {
             "domIncluded": True,
@@ -408,20 +445,36 @@ def main():
             "rollingWindowMs": 2000,
             "persistentCallbackPeaks": "per backend run; reset on backend change or explicit clear",
             "callbackOrder": "JS first and candidate first balanced across rows, reversed on each reschedule",
-            "sharedSelectionRenderer": ["js", "vir-selection", "fir"],
+            "sharedSelectionRenderer": ["js", "vir-selection", "fir", "llvm"],
             "fullVirOwnsPatchRendering": True,
-            "sharedJsFirRenderer": True,
+            "sharedHostSelectionRenderer": True,
             "jsInput": "original JavaScript AnimData object without conversion",
             "hostProfilerModes": {
                 HOST_PROFILER_OFF: "detailed dashboard phase observer disabled",
                 HOST_PROFILER_ON: "detailed dashboard phase observer enabled; phase charts suppressed",
             },
             "firAdapterInternalTiming": "v4 remains enabled in both modes; host-profiler-off is not yet a timing-free FIR production path",
+            "llvmAdapterInternalTiming": "v4 remains enabled in both modes; host-profiler-off is not yet a timing-free LLVM production path",
             "hostProfilerEffectInterpretation": "diagnostic only; a ratio range spanning 1 or delta range spanning zero does not resolve observer cost",
         },
         "identity": {
             "platform": platform.platform(),
             "python": platform.python_version(),
+            "browser": browser_version,
+            "illuminate": git_identity(ROOT),
+            "vir": git_identity(ROOT / "vir"),
+            "harnessSha256": sha256(Path(__file__).resolve()),
+            "virRuntimeSha256": sha256(
+                OUTPUT / "vir" / "sdk" / "wasm" / "vir-upstream.wasm"
+            ),
+            "virPackageSetSha256": sha256(
+                OUTPUT
+                / "vir"
+                / "module-sets"
+                / "Illuminate"
+                / "Animation"
+                / "Vir.irpkg-set.json"
+            ),
             "firCommit": build.get("sources", {}).get("fir", {}).get("commit")
             if build
             else None,
@@ -430,6 +483,21 @@ def main():
             .get("browserAdapter", {})
             .get("apiVersion")
             if build
+            else None,
+            "llvmFirCommit": llvm_build.get("sources", {})
+            .get("fir", {})
+            .get("commit")
+            if llvm_build
+            else None,
+            "llvmWasmSha256": llvm_build.get("artifacts", {})
+            .get("wasm", {})
+            .get("sha256")
+            if llvm_build
+            else None,
+            "llvmAdapterApi": llvm_build.get("capabilities", {})
+            .get("browserAdapter", {})
+            .get("apiVersion")
+            if llvm_build
             else None,
         },
         "policy": {
