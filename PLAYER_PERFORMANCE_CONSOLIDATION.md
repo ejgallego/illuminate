@@ -8,11 +8,11 @@ Lean playback state machine, and uses one shared DOM renderer for
 JavaScript, VIR, and FIR. The measurements no longer justify changing
 that boundary or moving playback semantics back into JavaScript.
 
-Six results are now strong enough to drive the next work:
+Seven results are now strong enough to drive the next work:
 
-1. Both corrected FIR packages pass all 107 differential traces
-   against the JavaScript oracle, VIR JSON, VIR typed, and VIR
-   selection implementations.
+1. The corrected FIR-native and LLVM packages pass all 107
+   differential traces against the JavaScript oracle, VIR JSON, VIR
+   typed, and VIR selection implementations.
 2. FIR is close to the JavaScript callback cost in the browser, but
    42–46% of its `decodeMs` is persistent-state reading and writing.
    JavaScript result construction is less than 1% of `decodeMs`.
@@ -30,6 +30,10 @@ Six results are now strong enough to drive the next work:
    ranges span both faster and slower outcomes. FIR v4 also performs
    generated-adapter timing in both modes, so the current off lane is
    not yet a timing-free production baseline.
+7. The first balanced LLVM comparison is the closest native result to
+   JavaScript so far: its unprofiled callback median is 1.89× the
+   paired JavaScript callback, compared with 2.81× for the older
+   FIR-native v4 package in the same campaign.
 
 The priority order is therefore:
 
@@ -40,11 +44,55 @@ The priority order is therefore:
    compact state ABI, while retaining generic dispatch as the oracle;
 3. preserve interpreter-local declaration/symbol caches across VIR's
    repeated retained calls;
-4. land and consume a clean scalar-tick FIR package as a smaller,
-   independent improvement;
+4. rebuild FIR-native v4 from the same FIR and Illuminate revisions as
+   LLVM before attributing their difference to the compiler backend;
 5. add the fixed-event browser regression harness described below;
 6. defer application-level type rewrites until these runtime boundary
    changes are measured.
+
+## LLVM four-backend checkpoint
+
+The 2026-08-22 dashboard v6 campaign compares JavaScript, VIR
+selection, full VIR, FIR-native selection, and LLVM selection across
+all 16 animation fixtures. It uses four balanced rounds, fresh browser
+contexts per backend-round, 3-second rolling samples, balanced
+host-profiler order, and hidden phase charts. Every observation
+retained 16/16 DOM matches.
+
+The unprofiled lane is the least observer-affected callback
+comparison:
+
+| Candidate      | Callback median | Paired ratio | Four-round ratio range | Median overhead |
+| -------------- | --------------: | -----------: | ---------------------: | --------------: |
+| LLVM selection |        0.032 ms |     1.89× JS |             1.76–2.00× |        +14.8 µs |
+| FIR selection  |        0.057 ms |     2.81× JS |             2.74–2.92× |        +36.2 µs |
+| VIR selection  |        0.077 ms |     3.54× JS |             3.36–3.70× |        +55.3 µs |
+| VIR full       |        0.312 ms |    16.35× JS |           13.88–17.27× |       +293.3 µs |
+
+The profiled LLVM callback divides into approximately 5.1 µs of
+Lean/Wasm execution, 4.3 µs of decode, 19.2 µs of shared host/DOM
+work, and 7.0 µs of adapter time. Its generic-versus-scalar package
+probe independently reports 8.44 µs versus 4.55 µs median callback
+time, so the scalar `f64` boundary remains materially useful.
+
+This is an apples-to-apples application boundary, not yet an
+apples-to-apples compiler comparison. LLVM was built from FIR
+`80a6b98c`, while the staged FIR-native v4 package records FIR
+`ac7467f3`. A matched-revision FIR-native rebuild is required before
+interpreting LLVM's 1.48× callback advantage over FIR-native as a
+backend result.
+
+The committed harness is `scripts/measure-live-dashboard.py` at
+Illuminate `4739ebd`; it records schema
+`illuminate.live-dashboard-phases/v6`. The clean capture used VIR
+`376f372`, release runtime SHA-256
+`000c0fe150c5a1a7ff8b66e11ff9b8388e4a260af665c039c500b4d94b0f10bc`,
+FIR-native Wasm SHA-256
+`8b13c8124ba7235e2a00cec154f42d406e6f568f071f51ec831bbb95486ae3f5`,
+and LLVM Wasm SHA-256
+`568a0670611bb40235556adf74fca480367cafc0b8415991180577cfd078b4b2`.
+The raw local capture is retained at
+`test_output/perf/live-dashboard-phases.json`.
 
 ## Compared implementations
 
@@ -53,11 +101,12 @@ The priority order is therefore:
 | JavaScript       | original JavaScript state machine | original JS object                          | direct JS selection | shared JS renderer |
 | VIR selection    | interpreted Lean                  | compact projection retained behind a handle | six-field selection | shared JS renderer |
 | FIR selection v4 | FIR-native Wasm                   | compact projection retained in Wasm         | six-field selection | shared JS renderer |
+| LLVM selection   | Lean native code via Emscripten   | compact projection retained in Wasm         | six-field selection | shared JS renderer |
 | VIR full         | interpreted Lean                  | full Lean-owned patch model                 | patch operations    | VIR DOM imports    |
 
-The first three lanes are the apples-to-apples comparison. Full VIR is
-retained as a useful end-to-end control, but it deliberately has a
-wider boundary.
+The first four lanes are the apples-to-apples application-boundary
+comparison. Full VIR is retained as a useful end-to-end control, but
+it deliberately has a wider boundary.
 
 ## Measurement identities
 
